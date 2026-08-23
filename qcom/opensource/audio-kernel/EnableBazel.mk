@@ -18,7 +18,6 @@ LOCAL_MODULE_KO_DIRS += soc/swr_ctrl_dlkm.ko
 LOCAL_MODULE_KO_DIRS += soc/snd_event_dlkm.ko
 LOCAL_MODULE_KO_DIRS += asoc/codecs/wcd_core_dlkm.ko
 LOCAL_MODULE_KO_DIRS += asoc/codecs/mbhc_dlkm.ko
-LOCAL_MODULE_KO_DIRS += asoc/codecs/sdca_registers_dlkm.ko
 LOCAL_MODULE_KO_DIRS += asoc/codecs/swr_dmic_dlkm.ko
 LOCAL_MODULE_KO_DIRS += asoc/codecs/wcd9xxx_dlkm.ko
 LOCAL_MODULE_KO_DIRS += asoc/codecs/swr_haptics_dlkm.ko
@@ -64,7 +63,6 @@ LOCAL_MODULE_KO_DIRS += soc/swr_ctrl_dlkm.ko
 LOCAL_MODULE_KO_DIRS += soc/snd_event_dlkm.ko
 LOCAL_MODULE_KO_DIRS += asoc/codecs/wcd_core_dlkm.ko
 LOCAL_MODULE_KO_DIRS += asoc/codecs/mbhc_dlkm.ko
-LOCAL_MODULE_KO_DIRS += asoc/codecs/sdca_registers_dlkm.ko
 LOCAL_MODULE_KO_DIRS += asoc/codecs/wcd9xxx_dlkm.ko
 LOCAL_MODULE_KO_DIRS += asoc/codecs/swr_haptics_dlkm.ko
 LOCAL_MODULE_KO_DIRS += asoc/codecs/stub_dlkm.ko
@@ -113,6 +111,11 @@ LOCAL_MODULE_KO_DIRS += asoc/codecs/wcd937x/wcd937x_dlkm.ko
 LOCAL_MODULE_KO_DIRS += asoc/codecs/wcd937x/wcd937x_slave_dlkm.ko
 LOCAL_MODULE_KO_DIRS += asoc/codecs/wcd938x/wcd938x_dlkm.ko
 LOCAL_MODULE_KO_DIRS += asoc/codecs/wcd938x/wcd938x_slave_dlkm.ko
+LOCAL_MODULE_KO_DIRS += asoc/codecs/sipa/sipa_dlkm.ko
+LOCAL_MODULE_KO_DIRS += asoc/codecs/sipa/sipa_tuning_dlkm.ko
+LOCAL_MODULE_KO_DIRS += asoc/codecs/fs15xxx/fs15xxx_drv_dlkm.ko
+LOCAL_MODULE_KO_DIRS += asoc/codecs/fs15xxx/fs15xxx_amp_dlkm.ko
+LOCAL_MODULE_KO_DIRS += asoc/codecs/lct_audio_info/lct_audio_info_dlkm.ko
 endif
 
 ifeq ($(call is-board-platform-in-list, niobe),true)
