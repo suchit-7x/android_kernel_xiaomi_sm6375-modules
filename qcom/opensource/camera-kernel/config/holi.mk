@@ -1,4 +1,4 @@
-# Settings for compiling holi camera architecture
+# SPDX-License-Identifier: GPL-2.0-only
 
 # Localized KCONFIG settings
 CONFIG_SPECTRA_ISP := y
@@ -11,3 +11,8 @@ ccflags-y += -DCONFIG_SPECTRA_ISP=1
 ccflags-y += -DCONFIG_SPECTRA_OPE=1
 ccflags-y += -DCONFIG_SPECTRA_TFE=1
 ccflags-y += -DCONFIG_SPECTRA_SENSOR=1
+
+# External Dependencies
+ifeq ($(CONFIG_QCOM_VA_MINIDUMP), y)
+KBUILD_CPPFLAGS += -DCONFIG_QCOM_VA_MINIDUMP=1
+endif

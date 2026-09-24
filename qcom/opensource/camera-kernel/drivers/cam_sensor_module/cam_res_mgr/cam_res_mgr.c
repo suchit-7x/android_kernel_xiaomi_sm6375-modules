@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/init.h>
@@ -254,7 +254,7 @@ int cam_res_mgr_util_shared_gpio_check_hold(uint gpio)
 
 	if (is_shared_gpio && is_shared_pctrl_gpio) {
 		CAM_ERR(CAM_RES,
-			"gpio %u cannot be shared between pinctrl and gpio");
+			"gpio cannot be shared between pinctrl and gpio");
 		return -EINVAL;
 	}
 
@@ -636,9 +636,8 @@ static void cam_res_mgr_gpio_free(struct device *dev, uint gpio)
 			if (pctrl_idx >= 0) {
 				cam_res_mgr_shared_pinctrl_select_state(
 					pctrl_idx, false);
-			}
-			else {
-				CAM_ERR(CAM_RES, "Invalid PinCtrl Idx: %d", pctrl_idx);
+			} else {
+				CAM_ERR(CAM_RES, "invalid pinctrl idx: %d", pctrl_idx);
 			}
 		}
 
@@ -717,6 +716,8 @@ static int cam_res_mgr_shared_pinctrl_init(
 	}
 
 	for (i = 0; i < dt->num_shared_pctrl_gpio; i++) {
+		memset(pctrl_active, '\0', sizeof(pctrl_active));
+		memset(pctrl_suspend, '\0', sizeof(pctrl_suspend));
 		snprintf(pctrl_active, sizeof(pctrl_active),
 			"%s%s",
 			cam_res->dt.pctrl_name[i],

@@ -17,7 +17,6 @@
 #define CAM_HW_CDM_CPAS_NAME_2_1 "qcom,cam-cpas-cdm2_1"
 #define CAM_HW_CDM_RT_NAME_2_1   "qcom,cam-rt-cdm2_1"
 #define CAM_HW_CDM_OPE_NAME_2_1  "qcom,cam-ope-cdm2_1"
-#define CAM_HW_CDM_RT_NAME_2_2   "qcom,cam-rt-cdm2_2"
 
 int cam_hw_cdm_soc_get_dt_properties(struct cam_hw_info *cdm_hw,
 	const struct of_device_id *table);

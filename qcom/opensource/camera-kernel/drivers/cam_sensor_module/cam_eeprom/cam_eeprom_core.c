@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -13,6 +13,8 @@
 #include "cam_debug_util.h"
 #include "cam_common_util.h"
 #include "cam_packet_util.h"
+
+#include "gc08a8_otp_driver.h"
 
 #define MAX_READ_SIZE  0x7FFFF
 
@@ -34,6 +36,16 @@ static int cam_eeprom_read_memory(struct cam_eeprom_ctrl_t *e_ctrl,
 	struct cam_eeprom_memory_map_t    *emap = block->map;
 	struct cam_eeprom_soc_private     *eb_info = NULL;
 	uint8_t                           *memptr = block->mapdata;
+	int                                addr;
+	int                                start_addr = 0x15a8;
+	int                                end_addr = 0x4ea8;
+	int                                sn_start = 0x8a08;
+	int                                sn_end = 0x8a90;
+	int                                sensorid = 0;
+	int                                otp_flag = 0;
+	int                                vendorid = 0;
+	int                                otp_data = 0;
+	int                                i = 0;
 
 	if (!e_ctrl) {
 		CAM_ERR(CAM_EEPROM, "e_ctrl is NULL");
@@ -103,6 +115,111 @@ static int cam_eeprom_read_memory(struct cam_eeprom_ctrl_t *e_ctrl,
 			}
 		}
 
+		camera_io_dev_read(&e_ctrl->io_master_info, OTP_GC08A8_SENSORID_REG, &sensorid, CAMERA_SENSOR_I2C_TYPE_WORD, CAMERA_SENSOR_I2C_TYPE_WORD);
+		if (sensorid == 0x08a8)
+		{
+			CAM_DBG(CAM_EEPROM, "zengx otp init start");
+			vendorid = otp_read_vendorid(e_ctrl);
+			CAM_DBG(CAM_EEPROM, "zengx vendorid = 0x%2x", vendorid);
+			if (vendorid == 0x09) // read otp_data for truly_gc08a8
+			{
+			    CAM_DBG(CAM_EEPROM, "read truly_gc08a8 otp");
+			    init_otp_read_byte_gc08a8(e_ctrl);
+			    otp_set_addr_gc08a8(e_ctrl, 0x15a0);
+			    otp_byte_flag_gc08a8(e_ctrl);
+			    otp_flag = otp_read_reg_gc08a8(e_ctrl);
+			    if (otp_flag == 0x01)
+			    {
+			        memptr[i] = otp_flag;
+			    }
+			    else if (otp_flag == 0x13)
+			    {
+			        start_addr = 0x8ab8;
+				end_addr = 0xc3b8;
+				sn_start = 0xff18;
+				sn_end   = 0xffa0;
+				memptr[i] = otp_flag;
+			    }
+			    else
+			    {
+			        CAM_ERR(CAM_EEPROM, "truly_gc08a8 otp_flag error");
+			    }
+
+    			    init_otp_read_continue_gc08a8(e_ctrl);
+ 			    otp_set_addr_gc08a8(e_ctrl, start_addr);
+			    otp_continue_flag_gc08a8(e_ctrl);
+
+			    for (addr = start_addr; addr <= end_addr; addr = addr + 8)
+			    {
+				otp_data = otp_read_reg_gc08a8(e_ctrl);
+				++i;
+				memptr[i] = otp_data;
+			    }
+			    otp_set_addr_gc08a8(e_ctrl, sn_start);
+			    otp_continue_flag_gc08a8(e_ctrl);
+			    for (addr = sn_start; addr <= sn_end; addr = addr + 8)
+			    {
+				otp_data = otp_read_reg_gc08a8(e_ctrl);
+				++i;
+				memptr[i] = otp_data;
+			    }
+			    memptr += emap[j].mem.valid_size;
+			}
+			else if (vendorid == 0x10) // read otp_data for aac_gc08a8
+			{
+			    CAM_DBG(CAM_EEPROM, "zengx read aac_gc08a8 otp");
+			    init_otp_read_byte_gc08a8(e_ctrl);
+			    otp_set_addr_gc08a8(e_ctrl, 0x8ab0);
+			    otp_byte_flag_gc08a8(e_ctrl);
+			    otp_flag = otp_read_reg_gc08a8(e_ctrl);
+			    CAM_DBG(CAM_EEPROM, "otp_flag = 0x%2x", otp_flag);
+			    if (otp_flag == 0x00)
+			    {
+			        start_addr = 0x15a0;
+				end_addr = 0x4ea8;
+				sn_start = 0x8a08;
+				sn_end = 0x8a90;
+			    }
+			    else if (otp_flag == 0x01)
+			    {
+			        start_addr = 0x8ab8;
+				end_addr = 0xc3c0;
+				sn_start = 0xff20;
+				sn_end = 0xffa8;
+			    }
+			    else
+			    {
+			        CAM_ERR(CAM_EEPROM, "aac_gc08a8 otp_flag error");
+			    }
+
+    			    init_otp_read_continue_gc08a8(e_ctrl);
+ 			    otp_set_addr_gc08a8(e_ctrl, start_addr);
+			    otp_continue_flag_gc08a8(e_ctrl);
+
+			    for (addr = start_addr; addr <= end_addr; addr = addr + 8)
+			    {
+				otp_data = otp_read_reg_gc08a8(e_ctrl);
+				memptr[i] = otp_data;
+				++i;
+			    }
+			    otp_set_addr_gc08a8(e_ctrl, sn_start);
+			    otp_continue_flag_gc08a8(e_ctrl);
+			    for (addr = sn_start; addr <= sn_end; addr = addr + 8)
+			    {
+				otp_data = otp_read_reg_gc08a8(e_ctrl);
+				memptr[i] = otp_data;
+				++i;
+			    }
+			    memptr += emap[j].mem.valid_size;
+			}
+			else
+			{
+			    CAM_ERR(CAM_EEPROM, "gc08a8 vendorid read fail");
+			}
+
+			CAM_ERR(CAM_EEPROM, "zengx otp init end");
+		}
+		else{
 		if (emap[j].mem.valid_size) {
 			rc = camera_io_dev_read_seq(&e_ctrl->io_master_info,
 				emap[j].mem.addr, memptr,
@@ -115,6 +232,7 @@ static int cam_eeprom_read_memory(struct cam_eeprom_ctrl_t *e_ctrl,
 				return rc;
 			}
 			memptr += emap[j].mem.valid_size;
+		}
 		}
 
 		if (emap[j].pageen.valid_size) {
@@ -145,12 +263,12 @@ static int cam_eeprom_read_memory(struct cam_eeprom_ctrl_t *e_ctrl,
  *
  * Returns success or failure
  */
-static int cam_eeprom_power_up(struct cam_eeprom_ctrl_t *e_ctrl,
+int cam_eeprom_power_up(struct cam_eeprom_ctrl_t *e_ctrl,
 	struct cam_sensor_power_ctrl_t *power_info)
 {
-	int32_t                                 rc = 0;
-	struct cam_hw_soc_info                 *soc_info = &e_ctrl->soc_info;
-	struct completion                      *i3c_probe_completion = NULL;
+	int32_t                 rc = 0;
+	struct cam_hw_soc_info *soc_info =
+		&e_ctrl->soc_info;
 
 	/* Parse and fill vreg params for power up settings */
 	rc = msm_camera_fill_vreg_params(
@@ -176,21 +294,19 @@ static int cam_eeprom_power_up(struct cam_eeprom_ctrl_t *e_ctrl,
 
 	power_info->dev = soc_info->dev;
 
-	if (e_ctrl->io_master_info.master_type == I3C_MASTER)
-		i3c_probe_completion = cam_eeprom_get_i3c_completion(e_ctrl->soc_info.index);
-
-	rc = cam_sensor_core_power_up(power_info, soc_info, i3c_probe_completion);
+	rc = cam_sensor_core_power_up(power_info, soc_info);
 	if (rc) {
 		CAM_ERR(CAM_EEPROM, "failed in eeprom power up rc %d", rc);
 		return rc;
 	}
 
-	rc = camera_io_init(&(e_ctrl->io_master_info));
-	if (rc) {
-		CAM_ERR(CAM_EEPROM, "cci_init failed");
-		goto cci_failure;
+	if (e_ctrl->io_master_info.master_type == CCI_MASTER) {
+		rc = camera_io_init(&(e_ctrl->io_master_info));
+		if (rc) {
+			CAM_ERR(CAM_EEPROM, "cci_init failed");
+			goto cci_failure;
+		}
 	}
-
 	return rc;
 cci_failure:
 	if (cam_sensor_util_power_down(power_info, soc_info))
@@ -205,7 +321,7 @@ cci_failure:
  *
  * Returns success or failure
  */
-static int cam_eeprom_power_down(struct cam_eeprom_ctrl_t *e_ctrl)
+int cam_eeprom_power_down(struct cam_eeprom_ctrl_t *e_ctrl)
 {
 	struct cam_sensor_power_ctrl_t *power_info;
 	struct cam_hw_soc_info         *soc_info;
@@ -232,7 +348,8 @@ static int cam_eeprom_power_down(struct cam_eeprom_ctrl_t *e_ctrl)
 		return rc;
 	}
 
-	camera_io_release(&(e_ctrl->io_master_info));
+	if (e_ctrl->io_master_info.master_type == CCI_MASTER)
+		camera_io_release(&(e_ctrl->io_master_info));
 
 	return rc;
 }
@@ -487,6 +604,7 @@ static int32_t cam_eeprom_parse_memory_map(
 		}
 
 		*num_map += (payload_count - 1);
+		cmd_buf += cmd_length_in_bytes / sizeof(int32_t);
 		processed_size +=
 			cmd_length_in_bytes;
 		break;
@@ -505,6 +623,7 @@ static int32_t cam_eeprom_parse_memory_map(
 		map[*num_map].mem.data_type = i2c_cont_rd->header.data_type;
 		map[*num_map].mem.valid_size =
 			payload_count;
+		cmd_buf += cmd_length_in_bytes / sizeof(int32_t);
 		processed_size +=
 			cmd_length_in_bytes;
 		data->num_data += map[*num_map].mem.valid_size;
@@ -547,6 +666,7 @@ static int32_t cam_eeprom_parse_memory_map(
 			map[*num_map].poll.delay = i2c_poll->timeout;
 			map[*num_map].poll.valid_size = 1;
 		}
+		cmd_buf += cmd_length_in_bytes / sizeof(int32_t);
 		processed_size +=
 			cmd_length_in_bytes;
 		break;
@@ -604,7 +724,6 @@ static int32_t cam_eeprom_handle_continuous_write(
 	if (i2c_list == NULL ||
 		i2c_list->seq_settings.reg_data == NULL) {
 		CAM_ERR(CAM_SENSOR, "Failed in allocating i2c_list");
-		kfree(i2c_list);
 		return -ENOMEM;
 	}
 
@@ -647,7 +766,6 @@ static int32_t cam_eeprom_handle_continuous_write(
 	*list = &(i2c_list->list);
 	return rc;
 deallocate_i2c_list:
-	kfree(i2c_list->seq_settings.reg_data);
 	kfree(i2c_list);
 	return rc;
 }
@@ -907,6 +1025,7 @@ static int32_t cam_eeprom_parse_write_memory_packet(
 		cam_mem_put_cpu_buf(cmd_desc[i].mem_handle);
 	}
 	return rc;
+
 end:
 	cam_mem_put_cpu_buf(cmd_desc[i].mem_handle);
 	return rc;
@@ -1201,7 +1320,7 @@ static int32_t cam_eeprom_write(struct cam_eeprom_ctrl_t *e_ctrl)
 			&(i2c_set->list_head), list) {
 			rc = camera_io_dev_write_continuous(
 				&e_ctrl->io_master_info,
-				&i2c_list->i2c_settings, CAM_SENSOR_I2C_WRITE_BURST);
+				&i2c_list->i2c_settings, 1);
 		if (rc < 0) {
 			CAM_ERR(CAM_EEPROM,
 				"Error in EEPROM write");
@@ -1227,11 +1346,10 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 	int32_t                         rc = 0;
 	struct cam_control             *ioctl_ctrl = NULL;
 	struct cam_config_dev_cmd       dev_config;
-	uintptr_t                       generic_pkt_addr;
+	uintptr_t                        generic_pkt_addr;
 	size_t                          pkt_len;
 	size_t                          remain_len = 0;
 	struct cam_packet              *csl_packet = NULL;
-	struct cam_packet              *csl_packet_u = NULL;
 	struct cam_eeprom_soc_private  *soc_private =
 		(struct cam_eeprom_soc_private *)e_ctrl->soc_info.soc_private;
 	struct cam_sensor_power_ctrl_t *power_info = &soc_private->power_info;
@@ -1258,17 +1376,18 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 			"Inval cam_packet strut size: %zu, len_of_buff: %zu",
 			 sizeof(struct cam_packet), pkt_len);
 		rc = -EINVAL;
-		cam_mem_put_cpu_buf(dev_config.packet_handle);
 		return rc;
 	}
 
 	remain_len -= (size_t)dev_config.offset;
-	csl_packet_u = (struct cam_packet *)
+	csl_packet = (struct cam_packet *)
 		(generic_pkt_addr + (uint32_t)dev_config.offset);
-	rc = cam_packet_util_copy_pkt_to_kmd(csl_packet_u, &csl_packet, remain_len);
-	if (rc) {
-		CAM_ERR(CAM_EEPROM, "Copying packet to KMD failed");
-		goto put_ref;
+
+	if (cam_packet_util_validate_packet(csl_packet,
+		remain_len)) {
+		CAM_ERR(CAM_EEPROM, "Invalid packet params");
+		rc = -EINVAL;
+		return rc;
 	}
 
 	switch (csl_packet->header.op_code & 0xFFFFFF) {
@@ -1278,12 +1397,9 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 					e_ctrl->soc_info.dev->of_node, e_ctrl);
 			if (rc < 0) {
 				CAM_ERR(CAM_EEPROM, "Failed: rc : %d", rc);
-				goto end;
+				return rc;
 			}
 			rc = cam_eeprom_get_cal_data(e_ctrl, csl_packet);
-			if (rc)
-				CAM_WARN(CAM_EEPROM, "failed to get calibration data rc %d", rc);
-
 			vfree(e_ctrl->cal_data.mapdata);
 			vfree(e_ctrl->cal_data.map);
 			e_ctrl->cal_data.num_data = 0;
@@ -1296,7 +1412,7 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 		if (rc) {
 			CAM_ERR(CAM_EEPROM,
 				"Failed in parsing the pkt");
-			goto end;
+			return rc;
 		}
 
 		e_ctrl->cal_data.mapdata =
@@ -1332,9 +1448,6 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 		}
 
 		rc = cam_eeprom_get_cal_data(e_ctrl, csl_packet);
-		if (rc)
-			CAM_WARN(CAM_EEPROM, "failed to get calibration data rc %d", rc);
-
 		rc = cam_eeprom_power_down(e_ctrl);
 		e_ctrl->cam_eeprom_state = CAM_EEPROM_ACQUIRE;
 		vfree(e_ctrl->cal_data.mapdata);
@@ -1357,7 +1470,7 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 			csl_packet, e_ctrl);
 		if (rc < 0) {
 			CAM_ERR(CAM_EEPROM, "Failed: rc : %d", rc);
-			goto end;
+			return rc;
 		}
 
 		rc = cam_eeprom_power_up(e_ctrl,
@@ -1378,7 +1491,7 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 			e_ctrl->eebin_info.size);
 		if (rc < 0) {
 			CAM_ERR(CAM_EEPROM, "Failed in erase : %d", rc);
-			goto end;
+			return rc;
 		}
 
 		/* Buffer time margin */
@@ -1387,7 +1500,7 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 		rc = cam_eeprom_write(e_ctrl);
 		if (rc < 0) {
 			CAM_ERR(CAM_EEPROM, "Failed: rc : %d", rc);
-			goto end;
+			return rc;
 		}
 
 		rc = cam_eeprom_power_down(e_ctrl);
@@ -1404,9 +1517,7 @@ static int32_t cam_eeprom_pkt_parse(struct cam_eeprom_ctrl_t *e_ctrl, void *arg)
 		rc = -EINVAL;
 		break;
 	}
-end:
-	cam_common_mem_free(csl_packet);
-put_ref:
+
 	cam_mem_put_cpu_buf(dev_config.packet_handle);
 	return rc;
 power_down:
@@ -1414,7 +1525,6 @@ power_down:
 memdata_free:
 	vfree(e_ctrl->cal_data.mapdata);
 error:
-	cam_mem_put_cpu_buf(dev_config.packet_handle);
 	kfree(power_info->power_setting);
 	kfree(power_info->power_down_setting);
 	power_info->power_setting = NULL;
@@ -1423,7 +1533,6 @@ error:
 	e_ctrl->cal_data.num_data = 0;
 	e_ctrl->cal_data.num_map = 0;
 	e_ctrl->cam_eeprom_state = CAM_EEPROM_ACQUIRE;
-	cam_common_mem_free(csl_packet);
 	return rc;
 }
 

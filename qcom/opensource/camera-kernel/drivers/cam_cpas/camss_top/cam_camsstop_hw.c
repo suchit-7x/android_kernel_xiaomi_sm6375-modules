@@ -81,7 +81,6 @@ int cam_camsstop_get_internal_ops(struct cam_cpas_internal_ops *internal_ops)
 	internal_ops->setup_qos_settings = NULL;
 	internal_ops->print_poweron_settings = NULL;
 	internal_ops->qchannel_handshake = NULL;
-	internal_ops->set_tpg_mux_sel = NULL;
 
 	return 0;
 }

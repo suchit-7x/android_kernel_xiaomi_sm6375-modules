@@ -6,6 +6,13 @@
 
 #include "cam_cdm.h"
 
+struct cam_cdm_pid_mid_data cdm_hw_2_1_pid_mid_data = {
+	.cdm_pid = 2,
+	.cdm_mid = 0,
+	.ope_cdm_pid = 0,
+	.ope_cdm_mid = 2,
+};
+
 struct cam_cdm_bl_pending_req_reg_params cdm_hw_2_1_bl_pending_req0 = {
 	.rb_offset = 0x6c,
 	.rb_mask = 0x1ff,
@@ -179,7 +186,6 @@ static struct cam_cdm_common_regs cdm_hw_2_1_cmn_reg_offset = {
 	.core_cfg = 0x18,
 	.core_en = 0x1c,
 	.fe_cfg = 0x20,
-	.cdm_status = 0x0,
 	.irq_context_status = 0x2c,
 	.bl_fifo_rb = 0x60,
 	.bl_fifo_base_rb = 0x64,
@@ -228,6 +234,7 @@ static struct cam_cdm_common_regs cdm_hw_2_1_cmn_reg_offset = {
 	.icl_reg = &cdm_2_1_icl,
 	.spare = 0x3fc,
 	.priority_group_bit_offset = 20,
+	.cdm_pid_mid_info = &cdm_hw_2_1_pid_mid_data,
 };
 
 static struct cam_cdm_common_reg_data cdm_hw_2_1_cmn_reg_data = {

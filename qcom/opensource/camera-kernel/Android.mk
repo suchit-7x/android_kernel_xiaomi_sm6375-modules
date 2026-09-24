@@ -15,23 +15,6 @@ DLKM_DIR := $(TOP)/device/qcom/common/dlkm
 
 LOCAL_MODULE_DDK_BUILD := true
 
-LOCAL_MODULE_DDK_SUBTARGET_REGEX := "camera.*"
-ifeq ($(TARGET_BOARD_PLATFORM), volcano)
-  LOCAL_MODULE_DDK_SUBTARGET_REGEX := "$(TARGET_BOARD_PLATFORM)_camera.*"
-endif
-
-# List of board platforms for which MMRM driver API should be enabled
-MMRM_BOARDS := taro parrot kalama pineapple crow volcano
-
-# List of board platforms for which Synx V2 vendor driver API should be enabled
-SYNX_VENDOR_BOARDS := pineapple
-
-# List of board platforms for which SMCINVOKE_DLKM driver API should be enabled
-SMCINVOKE_DLKM_BOARDS := pineapple
-
-# List of board platforms for which SMMU_PROXY_DLKM driver API should be enabled
-SMMU_PROXY_DLKM_BOARDS := pineapple
-
 CAMERA_SRC_FILES := \
                     $(addprefix $(LOCAL_PATH)/, $(call all-named-files-under,*.h,drivers dt-bindings include))\
                     $(addprefix $(LOCAL_PATH)/, $(call all-named-files-under,*.mk,config))\
@@ -74,18 +57,9 @@ LOCAL_MODULE_TAGS           := optional
 #LOCAL_MODULE_KBUILD_NAME   := camera.ko
 #LOCAL_MODULE_DEBUG_ENABLE  := true
 
-# Check build for optional dependencies
-include $(LOCAL_PATH)/dependency.mk
-
-# $(info LOCAL_SRC_FILES = $(LOCAL_SRC_FILES))
-# $(info intermediates mmrm symvers path = $(call intermediates-dir-for,DLKM,mmrm-module-symvers))
-# $(info CAMERA_EXTRA_SYMBOLS = $(CAMERA_EXTRA_SYMBOLS))
-# $(info CAMERA_EXTRA_CONFIGS = $(CAMERA_EXTRA_CONFIGS))
-# $(info LOCAL_ADDITIONAL_DEPENDENCIES = $(LOCAL_ADDITIONAL_DEPENDENCIES))
-# $(info LOCAL_REQUIRED_MODULES = $(LOCAL_REQUIRED_MODULES))
-# $(info DLKM_DIR = $(DLKM_DIR))
 $(info KBUILD_OPTIONS = $(KBUILD_OPTIONS))
 
+BOARD_VENDOR_KERNEL_MODULES += $(LOCAL_MODULE_PATH)/$(LOCAL_MODULE)
 ifeq ($(TARGET_BOARD_PLATFORM), lahaina)
 # Include Kernel DLKM Android.mk target to place generated .ko file in image
 include $(DLKM_DIR)/AndroidKernelModule.mk
@@ -97,3 +71,4 @@ endif
 
 endif # End of check for board platform
 endif # ifeq ($(CAMERA_DLKM_ENABLED),true)
+endif

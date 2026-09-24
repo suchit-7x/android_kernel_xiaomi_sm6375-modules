@@ -30,8 +30,6 @@ enum cam_hw_state {
  * @soc_info:              Platform SOC properties for hardware
  * @node_info:             Private HW data related to nodes
  * @core_info:             Private HW data related to core logic
- * @presil_hw_lock:        Mutex lock used for presil in place of hw_lock,
- *                         for drivers like CDM
  *
  */
 struct cam_hw_info {
@@ -43,10 +41,6 @@ struct cam_hw_info {
 	struct cam_hw_soc_info          soc_info;
 	void                           *node_info;
 	void                           *core_info;
-
-#ifdef CONFIG_CAM_PRESIL
-	struct mutex                    presil_hw_lock;
-#endif
 };
 
 #endif /* _CAM_HW_H_ */
