@@ -8,7 +8,6 @@
 #include <linux/iopoll.h>
 
 #include "dsi_catalog.h"
-#include "dsi_ctrl.h"
 #include "dsi_ctrl_hw.h"
 #include "dsi_ctrl_reg.h"
 #include "dsi_hw.h"
@@ -24,7 +23,6 @@
 #define DSI_CTRL_VIDEO_MISR_ENABLE        BIT(16)
 #define DSI_CTRL_DMA_LINK_SEL             (BIT(12)|BIT(13))
 #define DSI_CTRL_MDP0_LINK_SEL            (BIT(20)|BIT(22))
-#define DSI_VBIF_CTRL_PRIORITY            0x07
 
 static bool dsi_dsc_compression_enabled(struct dsi_mode_info *mode)
 {
@@ -854,15 +852,14 @@ void dsi_ctrl_hw_cmn_cmd_engine_en(struct dsi_ctrl_hw *ctrl, bool on)
  * set, caller should make a separate call to trigger_command_dma() to
  * transmit the command.
  */
-void dsi_ctrl_hw_cmn_kickoff_command(struct dsi_ctrl_hw *ctrl_hw,
+void dsi_ctrl_hw_cmn_kickoff_command(struct dsi_ctrl_hw *ctrl,
 				    struct dsi_ctrl_cmd_dma_info *cmd,
 				    u32 flags)
 {
 	u32 reg = 0;
-	struct dsi_ctrl *ctrl = container_of(ctrl_hw, struct dsi_ctrl, hw);
 
 	/*Set BROADCAST_EN and EMBEDDED_MODE */
-	reg = DSI_R32(ctrl_hw, DSI_COMMAND_MODE_DMA_CTRL);
+	reg = DSI_R32(ctrl, DSI_COMMAND_MODE_DMA_CTRL);
 	if (cmd->en_broadcast)
 		reg |= BIT(31);
 	else
@@ -881,29 +878,23 @@ void dsi_ctrl_hw_cmn_kickoff_command(struct dsi_ctrl_hw *ctrl_hw,
 	reg |= BIT(28);/* Select embedded mode */
 	reg &= ~BIT(24);/* packet type */
 	reg &= ~BIT(29);/* WC_SEL to 0 */
-	DSI_W32(ctrl_hw, DSI_COMMAND_MODE_DMA_CTRL, reg);
+	DSI_W32(ctrl, DSI_COMMAND_MODE_DMA_CTRL, reg);
 
-	reg = DSI_R32(ctrl_hw, DSI_DMA_FIFO_CTRL);
+	reg = DSI_R32(ctrl, DSI_DMA_FIFO_CTRL);
 	reg |= BIT(20);/* Disable write watermark*/
 	reg |= BIT(16);/* Disable read watermark */
 
-	DSI_W32(ctrl_hw, DSI_DMA_FIFO_CTRL, reg);
-	DSI_W32(ctrl_hw, DSI_DMA_CMD_OFFSET, cmd->offset);
-	DSI_W32(ctrl_hw, DSI_DMA_CMD_LENGTH, (cmd->length & 0xFFFFFF));
-
-	if (ctrl->version >= DSI_CTRL_VERSION_2_8) {
-		reg = DSI_R32(ctrl_hw, DSI_VBIF_CTRL);
-		reg |= (DSI_VBIF_CTRL_PRIORITY & 0x7);
-		DSI_W32(ctrl_hw, DSI_VBIF_CTRL, reg);
-	}
+	DSI_W32(ctrl, DSI_DMA_FIFO_CTRL, reg);
+	DSI_W32(ctrl, DSI_DMA_CMD_OFFSET, cmd->offset);
+	DSI_W32(ctrl, DSI_DMA_CMD_LENGTH, (cmd->length & 0xFFFFFF));
 
 	/* wait for writes to complete before kick off */
 	wmb();
 
 	if (!(flags & DSI_CTRL_HW_CMD_WAIT_FOR_TRIGGER))
-		DSI_W32(ctrl_hw, DSI_CMD_MODE_DMA_SW_TRIGGER, 0x1);
+		DSI_W32(ctrl, DSI_CMD_MODE_DMA_SW_TRIGGER, 0x1);
 
-	SDE_EVT32(ctrl_hw->index, cmd->length, flags);
+	SDE_EVT32(ctrl->index, cmd->length, flags);
 }
 
 /**
@@ -1055,24 +1046,6 @@ u32 dsi_ctrl_hw_cmn_get_cmd_read_data(struct dsi_ctrl_hw *ctrl,
 		return 0;
 	}
 
-	/*
-	 * Large read_cnt value can lead to negative repeated_bytes value
-	 * and array out of bounds access of read buffer.
-	 * Avoid this by resetting read_cnt to expected value when panel
-	 * sends more bytes than expected.
-	 */
-	if (rx_byte == 4 && read_cnt > 4) {
-		DSI_CTRL_HW_INFO(ctrl,
-			"Expected %u bytes for short read but received %u bytes\n",
-			rx_byte, read_cnt);
-		read_cnt = rx_byte;
-	} else if (rx_byte == 16 && read_cnt > (pkt_size + 6)) {
-		DSI_CTRL_HW_INFO(ctrl,
-			"Expected %u bytes for long read but received %u bytes\n",
-			pkt_size + 6, read_cnt);
-		read_cnt = pkt_size + 6;
-	}
-
 	if (read_cnt > 16) {
 		int bytes_shifted, data_lost = 0, rem_header = 0;
 
@@ -1204,12 +1177,11 @@ void dsi_ctrl_hw_cmn_clear_interrupt_status(struct dsi_ctrl_hw *ctrl, u32 ints)
 		reg |= BIT(30);
 
 	/*
-	 * Do not clear error status. It will be cleared as part of error handler function.
-	 * Do not clear dynamic refresh done status. It will be cleared as part of
-	 * wait4dynamic_refresh_done() function.
+	 * Do not clear error status.
+	 * It will be cleared as part of
+	 * error handler function.
 	 */
-	reg &= ~(BIT(24) | BIT(28));
-
+	reg &= ~BIT(24);
 	DSI_W32(ctrl, DSI_INT_CTRL, reg);
 
 	DSI_CTRL_HW_DBG(ctrl, "Clear interrupts, ints = 0x%x, INT_CTRL=0x%x\n",

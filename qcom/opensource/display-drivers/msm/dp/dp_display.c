@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+ * Copyright (c) 2021-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -170,7 +170,6 @@ struct dp_display_private {
 
 	enum drm_connector_status cached_connector_status;
 	enum dp_display_states state;
-	enum dp_aux_switch_type switch_type;
 
 	struct platform_device *pdev;
 	struct device_node *aux_switch_node;
@@ -203,7 +202,6 @@ struct dp_display_private {
 	struct delayed_work hdcp_cb_work;
 	struct work_struct connect_work;
 	struct work_struct attention_work;
-	struct work_struct disconnect_work;
 	struct mutex session_lock;
 	struct mutex accounting_lock;
 	bool hdcp_delayed_off;
@@ -761,7 +759,6 @@ static int dp_display_pre_hw_release(void *data)
 	dp_display_state_add(DP_STATE_TUI_ACTIVE);
 	cancel_work_sync(&dp->connect_work);
 	cancel_work_sync(&dp->attention_work);
-	cancel_work_sync(&dp->disconnect_work);
 	flush_workqueue(dp->wq);
 
 	dp_display_pause_audio(dp, true);
@@ -1191,11 +1188,6 @@ static void dp_display_host_deinit(struct dp_display_private *dp)
 		return;
 	}
 
-	if (dp_display_state_is(DP_STATE_READY)) {
-		DP_DEBUG("dp deinit before unready\n");
-		dp_display_host_unready(dp);
-	}
-
 	dp_display_abort_hdcp(dp, true);
 	dp->ctrl->deinit(dp->ctrl);
 	dp->hpd->host_deinit(dp->hpd, &dp->catalog->hpd);
@@ -1209,58 +1201,11 @@ static void dp_display_host_deinit(struct dp_display_private *dp)
 	DP_INFO("[OK]\n");
 }
 
-static bool dp_display_hpd_irq_pending(struct dp_display_private *dp)
-{
-
-	unsigned long wait_timeout_ms = 0;
-	unsigned long t_out = 0;
-	unsigned long wait_time = 0;
-
-	do {
-		/*
-		 * If an IRQ HPD is pending, then do not send a connect notification.
-		 * Once this work returns, the IRQ HPD would be processed and any
-		 * required actions (such as link maintenance) would be done which
-		 * will subsequently send the HPD notification. To keep things simple,
-		 * do this only for SST use-cases. MST use cases require additional
-		 * care in order to handle the side-band communications as well.
-		 *
-		 * One of the main motivations for this is DP LL 1.4 CTS use case
-		 * where it is possible that we could get a test request right after
-		 * a connection, and the strict timing requriements of the test can
-		 * only be met if we do not wait for the e2e connection to be set up.
-		 */
-		if (!dp->mst.mst_active && (work_busy(&dp->attention_work) == WORK_BUSY_PENDING)) {
-			SDE_EVT32_EXTERNAL(dp->state, 99, jiffies_to_msecs(t_out));
-			DP_DEBUG("Attention pending, skip HPD notification\n");
-			return true;
-		}
-
-		/*
-		 * If no IRQ HPD, delay the HPD connect notification for
-		 * MAX_CONNECT_NOTIFICATION_DELAY_MS to see if sink generates any IRQ HPDs
-		 * after the HPD high. Wait for
-		 * MAX_CONNECT_NOTIFICATION_DELAY_MS to make sure any IRQ HPD from test
-		 * requests aren't missed.
-		 */
-		reinit_completion(&dp->attention_comp);
-		wait_timeout_ms = min_t(unsigned long, dp->debug->connect_notification_delay_ms,
-				(unsigned long) MAX_CONNECT_NOTIFICATION_DELAY_MS - wait_time);
-		t_out = wait_for_completion_timeout(&dp->attention_comp,
-				msecs_to_jiffies(wait_timeout_ms));
-		wait_time += (t_out == 0) ?  wait_timeout_ms : t_out;
-
-	} while ((wait_timeout_ms < wait_time) && (wait_time < MAX_CONNECT_NOTIFICATION_DELAY_MS));
-
-	DP_DEBUG("wait_timeout=%lu ms, time_waited=%lu ms\n", wait_timeout_ms, wait_time);
-
-	return false;
-
-}
-
 static int dp_display_process_hpd_high(struct dp_display_private *dp)
 {
 	int rc = -EINVAL;
+	unsigned long wait_timeout_ms;
+	unsigned long t;
 
 	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY, dp->state);
 	mutex_lock(&dp->session_lock);
@@ -1279,8 +1224,10 @@ static int dp_display_process_hpd_high(struct dp_display_private *dp)
 	if (!dp->debug->sim_mode && !dp->no_aux_switch && !dp->parser->gpio_aux_switch
 			&& dp->aux_switch_node && dp->aux->switch_configure) {
 		rc = dp->aux->switch_configure(dp->aux, true, dp->hpd->orientation);
-		if (rc)
-			goto err_state;
+		if (rc) {
+			mutex_unlock(&dp->session_lock);
+			return rc;
+		}
 	}
 
 	/*
@@ -1308,7 +1255,7 @@ static int dp_display_process_hpd_high(struct dp_display_private *dp)
 				 */
 				dp_display_state_remove(DP_STATE_CONNECTED);
 			}
-			goto err_unlock;
+			goto end;
 		}
 
 		/*
@@ -1322,14 +1269,14 @@ static int dp_display_process_hpd_high(struct dp_display_private *dp)
 	rc = dp_display_host_ready(dp);
 	if (rc) {
 		dp_display_state_show("[ready failed]");
-		goto err_state;
+		goto end;
 	}
 
 	dp->link->psm_config(dp->link, &dp->panel->link_info, false);
 	dp->debug->psm_enabled = false;
 
 	if (!dp->dp_display.base_connector)
-		goto err_unready;
+		goto end;
 
 	rc = dp->panel->read_sink_caps(dp->panel,
 			dp->dp_display.base_connector, dp->hpd->multi_func);
@@ -1337,8 +1284,10 @@ static int dp_display_process_hpd_high(struct dp_display_private *dp)
 	 * ETIMEDOUT --> cable may have been removed
 	 * ENOTCONN --> no downstream device connected
 	 */
-	if (rc == -ETIMEDOUT || rc == -ENOTCONN)
-		goto err_unready;
+	if (rc == -ETIMEDOUT || rc == -ENOTCONN) {
+		dp_display_state_remove(DP_STATE_CONNECTED);
+		goto end;
+	}
 
 	dp->link->process_request(dp->link);
 	dp->panel->handle_sink_request(dp->panel);
@@ -1347,33 +1296,56 @@ static int dp_display_process_hpd_high(struct dp_display_private *dp)
 
 	rc = dp->ctrl->on(dp->ctrl, dp->mst.mst_active,
 			dp->panel->fec_en, dp->panel->dsc_en, false);
-	if (rc)
-		goto err_mst;
+	if (rc) {
+		dp_display_state_remove(DP_STATE_CONNECTED);
+		goto end;
+	}
 
 	dp->process_hpd_connect = false;
 
 	dp_display_set_mst_mgr_state(dp, true);
-
+end:
 	mutex_unlock(&dp->session_lock);
 
-	if (dp_display_hpd_irq_pending(dp))
-		goto end;
+	/*
+	 * Delay the HPD connect notification to see if sink generates any
+	 * IRQ HPDs immediately after the HPD high.
+	 */
+	reinit_completion(&dp->attention_comp);
+	wait_timeout_ms = min_t(unsigned long,
+			dp->debug->connect_notification_delay_ms,
+			(unsigned long) MAX_CONNECT_NOTIFICATION_DELAY_MS);
+	t = wait_for_completion_timeout(&dp->attention_comp,
+		msecs_to_jiffies(wait_timeout_ms));
+	DP_DEBUG("wait_timeout=%lu ms, time_waited=%u ms\n", wait_timeout_ms,
+		jiffies_to_msecs(t));
+
+	/*
+	 * If an IRQ HPD is pending, then do not send a connect notification.
+	 * Once this work returns, the IRQ HPD would be processed and any
+	 * required actions (such as link maintenance) would be done which
+	 * will subsequently send the HPD notification. To keep things simple,
+	 * do this only for SST use-cases. MST use cases require additional
+	 * care in order to handle the side-band communications as well.
+	 *
+	 * One of the main motivations for this is DP LL 1.4 CTS use case
+	 * where it is possible that we could get a test request right after
+	 * a connection, and the strict timing requriements of the test can
+	 * only be met if we do not wait for the e2e connection to be set up.
+	 */
+	if (!dp->mst.mst_active &&
+		(work_busy(&dp->attention_work) == WORK_BUSY_PENDING)) {
+		SDE_EVT32_EXTERNAL(dp->state, 99, jiffies_to_msecs(t));
+		DP_DEBUG("Attention pending, skip HPD notification\n");
+		goto skip_notify;
+	}
 
 	if (!rc && !dp_display_state_is(DP_STATE_ABORTED))
 		dp_display_send_hpd_notification(dp, false);
 
-	goto end;
-
-err_mst:
-	dp_display_update_mst_state(dp, false);
-err_unready:
-	dp_display_host_unready(dp);
-err_state:
-	dp_display_state_remove(DP_STATE_CONNECTED);
-err_unlock:
-	mutex_unlock(&dp->session_lock);
-end:
-	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state, rc);
+skip_notify:
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state,
+		wait_timeout_ms, rc);
 	return rc;
 }
 
@@ -1553,9 +1525,6 @@ static void dp_display_clear_reservation(struct dp_display *dp, struct dp_panel 
 	dp_display->tot_lm_blks_in_use -= panel->max_lm;
 	panel->max_lm = 0;
 
-	if (!dp_display->active_stream_cnt)
-		dp_display->tot_lm_blks_in_use = 0;
-
 	mutex_unlock(&dp_display->accounting_lock);
 }
 
@@ -1581,22 +1550,6 @@ static int dp_display_get_mst_pbn_div(struct dp_display *dp_display)
 	lane_count = dp->link->link_params.lane_count;
 
 	return link_rate * lane_count / 54000;
-}
-
-static int dp_display_get_active_stream_count(struct dp_display *dp_display)
-{
-	struct dp_display_private *dp;
-	int count = 0;
-
-	if (!dp_display) {
-		DP_ERR("invalid params\n");
-		return 0;
-	}
-
-	dp = container_of(dp_display, struct dp_display_private, dp_display);
-	count = dp->active_stream_cnt;
-
-	return count;
 }
 
 static int dp_display_stream_pre_disable(struct dp_display_private *dp,
@@ -1722,7 +1675,6 @@ static void dp_display_disconnect_sync(struct dp_display_private *dp)
 	/* wait for idle state */
 	cancel_work_sync(&dp->connect_work);
 	cancel_work_sync(&dp->attention_work);
-	cancel_work_sync(&dp->disconnect_work);
 	flush_workqueue(dp->wq);
 
 	/*
@@ -1928,12 +1880,10 @@ cp_irq:
 		 * It is possible that the connect_work skipped sending
 		 * the HPD notification if the attention message was
 		 * already pending. Send the notification here to
-		 * account for that. It is possible that the test sequence
-		 * can trigger an unplug after DP_LINK_STATUS_UPDATED, before
-		 * starting the next test case. Make sure to check the HPD status.
+		 * account for that. This is not needed if this
+		 * attention work was handling a test request
 		 */
-		if (!dp_display_state_is(DP_STATE_ABORTED))
-			dp_display_send_hpd_notification(dp, false);
+		dp_display_send_hpd_notification(dp, false);
 	}
 
 mst_attention:
@@ -2025,19 +1975,6 @@ static void dp_display_connect_work(struct work_struct *work)
 		dp->link->send_test_response(dp->link);
 }
 
-static void dp_display_disconnect_work(struct work_struct *work)
-{
-	struct dp_display_private *dp = container_of(work,
-			struct dp_display_private, disconnect_work);
-
-	dp_display_handle_disconnect(dp, false);
-
-	if (dp->debug->sim_mode && dp_display_state_is(DP_STATE_ABORTED))
-		dp_display_host_deinit(dp);
-
-	dp->debug->abort(dp->debug);
-}
-
 static int dp_display_usb_notifier(struct notifier_block *nb,
 	unsigned long action, void *data)
 {
@@ -2050,10 +1987,8 @@ static int dp_display_usb_notifier(struct notifier_block *nb,
 		dp_display_state_add(DP_STATE_ABORTED);
 		dp->ctrl->abort(dp->ctrl, true);
 		dp->aux->abort(dp->aux, true);
-
-		dp->power->park_clocks(dp->power);
-
-		queue_work(dp->wq, &dp->disconnect_work);
+		dp_display_handle_disconnect(dp, false);
+		dp->debug->abort(dp->debug);
 	}
 
 	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state, NOTIFY_DONE);
@@ -2157,7 +2092,6 @@ static int dp_init_sub_modules(struct dp_display_private *dp)
 	}
 
 	g_dp_display->is_mst_supported = dp->parser->has_mst;
-	g_dp_display->dp_mst_lm_merge_enable = dp->parser->dp_mst_lm_merge_en;
 	g_dp_display->dsc_cont_pps = dp->parser->dsc_continuous_pps;
 
 	dp->catalog = dp_catalog_get(dev, dp->parser);
@@ -2172,23 +2106,12 @@ static int dp_init_sub_modules(struct dp_display_private *dp)
 
 	dp->aux_switch_node = of_parse_phandle(dp->pdev->dev.of_node, phandle, 0);
 	if (!dp->aux_switch_node) {
+		DP_DEBUG("cannot parse %s handle\n", phandle);
 		dp->no_aux_switch = true;
-		DP_WARN("Aux switch node not found, assigning bypass mode as switch type\n");
-		dp->switch_type = DP_AUX_SWITCH_BYPASS;
-		goto skip_node_name;
 	}
 
-	if (!strcmp(dp->aux_switch_node->name, "fsa4480"))
-		dp->switch_type = DP_AUX_SWITCH_FSA4480;
-	else if (!strcmp(dp->aux_switch_node->name, "wcd939x_i2c"))
-		dp->switch_type = DP_AUX_SWITCH_WCD939x;
-	else
-		dp->switch_type = DP_AUX_SWITCH_BYPASS;
-
-skip_node_name:
 	dp->aux = dp_aux_get(dev, &dp->catalog->aux, dp->parser,
-			dp->aux_switch_node, dp->aux_bridge, g_dp_display->dp_aux_ipc_log,
-			dp->switch_type);
+			dp->aux_switch_node, dp->aux_bridge, g_dp_display->dp_aux_ipc_log);
 	if (IS_ERR(dp->aux)) {
 		rc = PTR_ERR(dp->aux);
 		DP_ERR("failed to initialize aux, rc = %d\n", rc);
@@ -2426,9 +2349,6 @@ static int dp_display_set_mode(struct dp_display *dp_display, void *panel,
 
 	mode->timing.bpp = dp->panel->get_mode_bpp(dp->panel,
 			mode->timing.bpp, mode->timing.pixel_clk_khz, dsc_en);
-
-	if (dp->mst.mst_active)
-		dp->mst.cbs.set_mst_mode_params(&dp->dp_display, mode);
 
 	dp_panel->pinfo = mode->timing;
 	mutex_unlock(&dp->session_lock);
@@ -2931,10 +2851,8 @@ static int dp_display_unprepare(struct dp_display *dp_display, void *panel)
 	/* log this as it results from user action of cable dis-connection */
 	DP_INFO("[OK]\n");
 end:
-	mutex_lock(&dp->accounting_lock);
 	dp->tot_lm_blks_in_use -= dp_panel->max_lm;
 	dp_panel->max_lm = 0;
-	mutex_unlock(&dp->accounting_lock);
 	dp_panel->deinit(dp_panel, flags);
 	mutex_unlock(&dp->session_lock);
 	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, dp->state);
@@ -3012,7 +2930,6 @@ static int dp_display_validate_topology(struct dp_display_private *dp,
 	bool dsc_capable = dp_mode->capabilities & DP_PANEL_CAPS_DSC;
 	u32 fps = dp_mode->timing.refresh_rate;
 	int avail_lm = 0;
-	bool mst_cap = false;
 
 	mutex_lock(&dp->accounting_lock);
 
@@ -3020,24 +2937,6 @@ static int dp_display_validate_topology(struct dp_display_private *dp,
 	if (rc) {
 		DP_ERR("error getting mixer count. rc:%d\n", rc);
 		goto end;
-	}
-
-	mst_cap = dp_panel->read_mst_cap(dp_panel);
-
-	if (dp->parser->has_mst && dp->parser->dp_mst_lm_merge_en &&
-			mst_cap && avail_res->num_lm) {
-		if (avail_res->num_lm == 1) {
-			/* if only 1 lm is available, assign it */
-			num_lm = 1;
-		} else {
-			if (dp->active_stream_cnt) {
-				/* no streams left, assign from available lm */
-				num_lm = min(num_lm, avail_res->num_lm);
-			} else {
-				/* keep at least 1 lm for second stream, assign from rest */
-				num_lm = min(num_lm, avail_res->num_lm - 1);
-			}
-		}
 	}
 
 	/* Merge using DSC, if enabled */
@@ -3132,12 +3031,6 @@ static enum drm_mode_status dp_display_validate_mode(
 
 	dp_display->convert_to_dp_mode(dp_display, panel, mode, &dp_mode);
 
-	/* As per spec, 640x480 mode should always be present as fail-safe */
-	if ((dp_mode.timing.h_active == 640) && (dp_mode.timing.v_active == 480) &&
-			(dp_mode.timing.pixel_clk_khz == 25175)) {
-		goto skip_validation;
-	}
-
 	rc = dp_display_validate_topology(dp, dp_panel, mode, &dp_mode, avail_res);
 	if (rc == -EAGAIN) {
 		dp_panel->convert_to_dp_mode(dp_panel, mode, &dp_mode);
@@ -3155,21 +3048,16 @@ static enum drm_mode_status dp_display_validate_mode(
 	if (rc)
 		goto end;
 
-skip_validation:
 	mode_status = MODE_OK;
 
-	if (!avail_res->num_lm_in_use) {
-		mutex_lock(&dp->accounting_lock);
-		dp->tot_lm_blks_in_use -= dp_panel->max_lm;
-		dp_panel->max_lm = max(dp_panel->max_lm, dp_mode.lm_count);
-		dp->tot_lm_blks_in_use += dp_panel->max_lm;
-		mutex_unlock(&dp->accounting_lock);
-	}
+	dp->tot_lm_blks_in_use -= dp_panel->max_lm;
+	dp_panel->max_lm = max(dp_panel->max_lm, dp_mode.lm_count);
+	dp->tot_lm_blks_in_use += dp_panel->max_lm;
 
 end:
 	mutex_unlock(&dp->session_lock);
 
-	DP_DEBUG_V("[%s clk:%d] mode is %s\n", mode->name, mode->clock,
+	DP_DEBUG_V("[%s] mode is %s\n", mode->name,
 			(mode_status == MODE_OK) ? "valid" : "invalid");
 
 	return mode_status;
@@ -3365,7 +3253,6 @@ static int dp_display_create_workqueue(struct dp_display_private *dp)
 	INIT_DELAYED_WORK(&dp->hdcp_cb_work, dp_display_hdcp_cb_work);
 	INIT_WORK(&dp->connect_work, dp_display_connect_work);
 	INIT_WORK(&dp->attention_work, dp_display_attention_work);
-	INIT_WORK(&dp->disconnect_work, dp_display_disconnect_work);
 
 	return 0;
 }
@@ -3763,52 +3650,6 @@ static void dp_display_wakeup_phy_layer(struct dp_display *dp_display,
 		hpd->wakeup_phy(hpd, wakeup);
 }
 
-static int dp_display_get_display_type(struct dp_display *dp_display,
-		const char **display_type)
-{
-	struct dp_display_private *dp;
-	struct device_node *of_node;
-
-	if (!dp_display || !display_type) {
-		pr_err("invalid input\n");
-		return -EINVAL;
-	}
-
-	dp = container_of(dp_display, struct dp_display_private, dp_display);
-
-	if (dp->parser)
-		*display_type = dp->parser->display_type;
-	else {
-		of_node = dp->pdev->dev.of_node;
-		*display_type = of_get_property(of_node, "qcom,display-type",
-					NULL);
-	}
-	return 0;
-}
-
-static int dp_display_mst_get_fixed_topology_display_type(
-		struct dp_display *dp_display, u32 strm_id,
-		const char **display_type)
-{
-	struct dp_display_private *dp;
-
-	if (!dp_display || !display_type) {
-		pr_err("invalid input\n");
-		return -EINVAL;
-	}
-
-	if (strm_id >= DP_STREAM_MAX) {
-		pr_err("invalid stream id:%d\n", strm_id);
-		return -EINVAL;
-	}
-
-	dp = container_of(dp_display, struct dp_display_private, dp_display);
-
-	*display_type = dp->parser->mst_fixed_display_type[strm_id];
-
-	return 0;
-}
-
 static int dp_display_probe(struct platform_device *pdev)
 {
 	int rc = 0;
@@ -3892,10 +3733,6 @@ static int dp_display_probe(struct platform_device *pdev)
 					dp_display_get_available_dp_resources;
 	g_dp_display->clear_reservation = dp_display_clear_reservation;
 	g_dp_display->get_mst_pbn_div = dp_display_get_mst_pbn_div;
-	g_dp_display->get_active_stream_count = dp_display_get_active_stream_count;
-	g_dp_display->get_display_type = dp_display_get_display_type;
-	g_dp_display->mst_get_fixed_topology_display_type =
-				dp_display_mst_get_fixed_topology_display_type;
 
 	rc = component_add(&pdev->dev, &dp_display_comp_ops);
 	if (rc) {

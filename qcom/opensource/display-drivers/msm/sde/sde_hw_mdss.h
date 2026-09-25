@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -676,8 +676,6 @@ struct sde_mdss_color {
  * @skip_blend_plane_w: skip plane width
  * @skip_blend_plane_h: skip plane height
  * @num_ds_enabled: Number of destination scalers enabled
- * @is_crtc_enabled: true if crtc is enabled
- * @overfetch_lines_on_top: extra lines to over fetch on top
  */
 struct sde_hw_cp_cfg {
 	void *payload;
@@ -697,8 +695,6 @@ struct sde_hw_cp_cfg {
 	u32 skip_blend_plane_w;
 	u32 skip_blend_plane_h;
 	u32 num_ds_enabled;
-	bool is_crtc_enabled;
-	u32 overfetch_lines_on_top;
 };
 
 /**
@@ -819,7 +815,6 @@ struct sde_splash_data {
  * @rd_ptr_irq:	The read pointer line at which interrupt has to be generated
  * @wr_ptr_irq:	The write pointer line at which interrupt has to be generated
  * @hw_vsync_mode:	Sync with external frame sync input
- * @detect_ctrl:	Tearing Detection Control is set to default configuration
  */
 struct sde_hw_tear_check {
 	u32 vsync_count;
@@ -831,7 +826,6 @@ struct sde_hw_tear_check {
 	u32 rd_ptr_irq;
 	u32 wr_ptr_irq;
 	u8 hw_vsync_mode;
-	u32 detect_ctrl;
 };
 
 /**

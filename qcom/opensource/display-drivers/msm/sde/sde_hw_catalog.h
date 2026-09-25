@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -49,18 +49,14 @@
 #define SDE_HW_VER_650	SDE_HW_VER(6, 5, 0) /* scuba */
 #define SDE_HW_VER_660	SDE_HW_VER(6, 6, 0) /* holi */
 #define SDE_HW_VER_670	SDE_HW_VER(6, 7, 0) /* shima */
+#define SDE_HW_VER_690	SDE_HW_VER(6, 9, 0) /* blair */
 #define SDE_HW_VER_700	SDE_HW_VER(7, 0, 0) /* lahaina */
 #define SDE_HW_VER_720	SDE_HW_VER(7, 2, 0) /* yupik */
 #define SDE_HW_VER_810	SDE_HW_VER(8, 1, 0) /* waipio */
 #define SDE_HW_VER_820	SDE_HW_VER(8, 2, 0) /* diwali */
 #define SDE_HW_VER_850	SDE_HW_VER(8, 5, 0) /* cape */
-#define SDE_HW_VER_870	SDE_HW_VER(8, 7, 0) /* pitti */
 #define SDE_HW_VER_900	SDE_HW_VER(9, 0, 0) /* kalama */
-#define SDE_HW_VER_910	SDE_HW_VER(9, 1, 0) /* neo */
 #define SDE_HW_VER_A00	SDE_HW_VER(10, 0, 0) /* pineapple */
-#define SDE_HW_VER_A10	SDE_HW_VER(10, 1, 0) /* cliffs */
-#define SDE_HW_VER_A20	SDE_HW_VER(10, 2, 0) /* volcano */
-
 
 /* Avoid using below IS_XXX macros outside catalog, use feature bit instead */
 #define IS_SDE_MAJOR_SAME(rev1, rev2)   \
@@ -84,17 +80,14 @@
 #define IS_SCUBA_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_650)
 #define IS_HOLI_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_660)
 #define IS_SHIMA_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_670)
+#define IS_BLAIR_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_690)
 #define IS_LAHAINA_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_700)
 #define IS_YUPIK_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_720)
 #define IS_WAIPIO_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_810)
 #define IS_DIWALI_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_820)
 #define IS_CAPE_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_850)
-#define IS_PITTI_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_870)
 #define IS_KALAMA_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_900)
-#define IS_NEO_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_910)
 #define IS_PINEAPPLE_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_A00)
-#define IS_CLIFFS_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_A10)
-#define IS_VOLCANO_TARGET(rev) IS_SDE_MAJOR_MINOR_SAME((rev), SDE_HW_VER_A20)
 
 #define SDE_HW_BLK_NAME_LEN	16
 
@@ -104,7 +97,6 @@
 #define MAX_IMG_WIDTH 0x3fff
 #define MAX_IMG_HEIGHT 0x3fff
 
-#define CRTC_SINGLE_MIXER_ONLY	1
 #define CRTC_DUAL_MIXERS_ONLY	2
 #define MAX_MIXERS_PER_CRTC	4
 #define MAX_MIXERS_PER_LAYOUT	2
@@ -421,8 +413,6 @@ enum {
  * @SDE_DISP_SECONDARY_PREF   Layer mixer preferred for secondary display
  * @SDE_MIXER_COMBINED_ALPHA  Layer mixer bg and fg alpha in single register
  * @SDE_MIXER_NOISE_LAYER     Layer mixer supports noise layer
- * @SDE_MIXER_IS_VIRTUAL      Layer mixer which is removed but used for proper
- *                            Dedicated CWB allocation
  * @SDE_MIXER_MAX             maximum value
  */
 enum {
@@ -436,7 +426,6 @@ enum {
 	SDE_DISP_DCWB_PREF,
 	SDE_MIXER_COMBINED_ALPHA,
 	SDE_MIXER_NOISE_LAYER,
-	SDE_MIXER_IS_VIRTUAL,
 	SDE_MIXER_MAX
 };
 
@@ -649,7 +638,6 @@ enum {
  * @SDE_INTF_WD_LTJ_CTL         INTF block has WD long term jitter control support
  * @SDE_INTF_TE_DEASSERT_DETECT INTF block has TE Deassert detect support
  * @SDE_INTF_VSYNC_TS_SRC_EN    INTF block has VSYNC timestamp source selection support
- * @SDE_INTF_TE_LEVEL_TRIGGER   INTF block has TE Level trigger gating support
  * @SDE_INTF_MAX
  */
 enum {
@@ -669,7 +657,6 @@ enum {
 	SDE_INTF_WD_LTJ_CTL,
 	SDE_INTF_TE_DEASSERT_DETECT,
 	SDE_INTF_VSYNC_TS_SRC_EN,
-	SDE_INTF_TE_LEVEL_TRIGGER,
 	SDE_INTF_MAX
 };
 
@@ -786,7 +773,6 @@ enum sde_ppb_size_option {
  * @SDE_FEATURE_DEDICATED_CWB  Dedicated-CWB supported
  * @SDE_FEATURE_DUAL_DEDICATED_CWB   Dual Dedicated-CWB supported
  * @SDE_FEATURE_WB_ROTATION    Support for image rotation through WB block
- * @SDE_FEATURE_ENABLE_HIBERNATION         Hibernation is supported
  * @SDE_FEATURE_3D_MERGE_RESET 3D merge reset supported
  * @SDE_FEATURE_DECIMATION     Decimation supported
  * @SDE_FEATURE_COMBINED_ALPHA Combined Alpha supported
@@ -835,7 +821,6 @@ enum sde_mdss_features {
 	SDE_FEATURE_DUAL_DEDICATED_CWB,
 	SDE_FEATURE_WB_ROTATION,
 	SDE_FEATURE_IDLE_PC,
-	SDE_FEATURE_ENABLE_HIBERNATION,
 	SDE_FEATURE_3D_MERGE_RESET,
 	SDE_FEATURE_DECIMATION,
 	SDE_FEATURE_COMBINED_ALPHA,
@@ -1344,7 +1329,6 @@ struct sde_mdp_cfg {
  * @debugfs_ctrl:           uidle is enabled/disabled through debugfs
  * @perf_cntr_en:           performance counters are enabled/disabled
  * @dirty:                  dirty flag for uidle update
- * @fal10_override:         flag to override fal10 veto
  */
 struct sde_uidle_cfg {
 	SDE_HW_BLK_INFO;
@@ -1365,7 +1349,6 @@ struct sde_uidle_cfg {
 	bool debugfs_ctrl;
 	bool perf_cntr_en;
 	bool dirty;
-	bool fal10_override;
 };
 
 /* struct sde_mdp_cfg : MDP TOP-BLK instance info
@@ -1908,7 +1891,7 @@ struct sde_perf_cfg {
  * @sspp_count          number of valid SSPP blocks available
  * @sspp                array of pointers to SSPP blocks
  * @mixer_count         number of valid LM blocks available
- * @virtual_mixers_mask bitmask of virtual mixers
+ * @mixer               array of pointers to LM blocks
  * @dspp_top            pointer to common DSPP_TOP block
  * @dspp_count          number of valid DSPP blocks available
  * @dspp                array of pointers to DSPP blocks
@@ -1966,8 +1949,7 @@ struct sde_perf_cfg {
  * @max_dsc_width       max dsc line width
  * @max_mixer_width     max layer mixer line width
  * @max_mixer_blendstages       max layer mixer blend stages (z orders)
- * @max_cwb             max number of cwb supported
- * @ddr_list_index      index of supported ddr type
+ * @max_cwb             max number of dcwb/cwb supported
  * @vbif_qos_nlvl       number of vbif QoS priority levels
  * @qos_target_time_ns  normalized qos target time for line-based qos
  * @macrotile_mode      UBWC parameter for macro tile channel distribution
@@ -1994,7 +1976,6 @@ struct sde_perf_cfg {
  * @ipcc_client_phys_id dpu ipcc client id for the hw, physical client id if supported
  * @ppb_sz_program      enum value for pingpong buffer size programming choice by hw
  * @ppb_buf_max_lines   maximum lines needed for pingpong latency buffer size
- * @capabilities	display capabilities of the hardware
  */
 struct sde_mdss_cfg {
 	/* Block Revisions */
@@ -2024,7 +2005,6 @@ struct sde_mdss_cfg {
 	struct sde_sspp_cfg sspp[MAX_BLOCKS];
 	u32 mixer_count;
 	struct sde_lm_cfg mixer[MAX_BLOCKS];
-	u32 virtual_mixers_mask;
 	struct sde_dspp_top_cfg dspp_top;
 	u32 dspp_count;
 	struct sde_dspp_cfg dspp[MAX_BLOCKS];
@@ -2120,9 +2100,6 @@ struct sde_mdss_cfg {
 
 	enum sde_ppb_size_option ppb_sz_program;
 	u32 ppb_buf_max_lines;
-	u32 ddr_list_index;
-
-	u32 capabilities;
 };
 
 struct sde_mdss_hw_cfg_handler {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -798,10 +798,8 @@ static int dp_ctrl_link_setup(struct dp_ctrl_private *ctrl, bool shallow)
 			break;
 		}
 
-		if (rc != -EAGAIN) {
+		if (rc != -EAGAIN)
 			dp_ctrl_link_rate_down_shift(ctrl);
-			ctrl->panel->init(ctrl->panel);
-		}
 
 		dp_ctrl_configure_source_link_params(ctrl, false);
 		dp_ctrl_disable_link_clock(ctrl);
@@ -1124,7 +1122,7 @@ static void dp_ctrl_mst_calculate_rg(struct dp_ctrl_private *ctrl,
 	u64 lclk = 0;
 	u64 lanes = ctrl->link->link_params.lane_count;
 	u64 bpp = panel->pinfo.bpp;
-	u64 pbn = panel->pinfo.pbn_no_overhead; // before dsc/fec overhead
+	u64 pbn = panel->pbn;
 	u64 numerator, denominator, temp, temp1, temp2;
 	u32 x_int = 0, y_frac_enum = 0;
 	u64 target_strm_sym, ts_int_fixp, ts_frac_fixp, y_frac_enum_fixp;
@@ -1314,13 +1312,7 @@ static int dp_ctrl_stream_on(struct dp_ctrl *dp_ctrl, struct dp_panel *panel)
 	/* wait for link training completion before fec config as per spec */
 	dp_ctrl_fec_setup(ctrl);
 	dp_ctrl_dsc_setup(ctrl, panel);
-
-	/*
-	 * Enabling TEST SINK CRC is causing blank screen on some monitors. This change is
-	 * required only for internal testing, hence disabling for commercial use. To be enabled
-	 * by dev team as required.
-	 * panel->sink_crc_enable(panel, true);
-	 */
+	panel->sink_crc_enable(panel, true);
 
 	return rc;
 }

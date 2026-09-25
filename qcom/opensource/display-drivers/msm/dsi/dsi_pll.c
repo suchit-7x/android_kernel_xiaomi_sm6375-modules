@@ -27,6 +27,9 @@ static int dsi_pll_clock_register(struct platform_device *pdev,
 	case DSI_PLL_4NM:
 		rc = dsi_pll_clock_register_4nm(pdev, pll_res);
 		break;
+	case DSI_PLL_10NM:
+		rc = dsi_pll_clock_register_10nm(pdev, pll_res);
+		break;
 	default:
 		rc = -EINVAL;
 		break;
@@ -77,7 +80,7 @@ static void dsi_pll_parse_dfps(struct platform_device *pdev,
 
 	pnode = of_parse_phandle(pdev->dev.of_node, "memory-region", 0);
 	if (IS_ERR_OR_NULL(pnode)) {
-		DSI_PLL_INFO(pll_res, "of_parse_phandle failed\n");
+		DSI_PLL_INFO(pll_res, "failed to parse memory-region\n");
 		goto node_err;
 	}
 
@@ -130,7 +133,7 @@ static int dsi_pll_parse_dfps_from_dt(struct platform_device *pdev,
 
 	pnode = of_parse_phandle(pdev->dev.of_node, "pll_codes_region", 0);
 	if (IS_ERR_OR_NULL(pnode)) {
-		DSI_PLL_ERR(pll_res, "of_parse_phandle failed\n");
+		DSI_PLL_INFO(pll_res, "failed to parse pll_codes_region\n");
 		pnode = NULL;
 		rc = -EINVAL;
 		goto err;
@@ -214,7 +217,7 @@ static int dsi_pll_parse_dfps_from_dt(struct platform_device *pdev,
 	code_entry = (struct pll_codes_entry *)&pll_codes_info->pll_code_data;
 
 	for (i = 0; i < header.num_entries; i++) {
-		if (code_entry[i].device_id == pll_res->index) {
+		if (code_entry[i].device_id == DISPLAY_PLL_CODEID_DSI0) {
 			codes_dfps = &pll_res->dfps->codes_dfps[vco_rate_cnt];
 			codes_dfps->is_valid = 1;
 			codes_dfps->clk_rate = code_entry[i].vco_rate;
@@ -273,6 +276,8 @@ int dsi_pll_init(struct platform_device *pdev, struct dsi_pll_resource **pll)
 		pll_res->pll_revision = DSI_PLL_4NM;
 	else if (!strcmp(label, "dsi_pll_5nm"))
 		pll_res->pll_revision = DSI_PLL_5NM;
+	else if (!strcmp(label, "dsi_pll_10nm"))
+		pll_res->pll_revision = DSI_PLL_10NM;
 	else
 		return -ENOTSUPP;
 
@@ -351,7 +356,7 @@ int dsi_pll_init(struct platform_device *pdev, struct dsi_pll_resource **pll)
 
 void dsi_pll_parse_dfps_data(struct platform_device *pdev, struct dsi_pll_resource *pll_res)
 {
-	if (!(pll_res->in_trusted_vm)) {
+	if (!(pll_res->index) && !(pll_res->in_trusted_vm)) {
 		if (dsi_pll_parse_dfps_from_dt(pdev, pll_res))
 			dsi_pll_parse_dfps(pdev, pll_res);
 	}

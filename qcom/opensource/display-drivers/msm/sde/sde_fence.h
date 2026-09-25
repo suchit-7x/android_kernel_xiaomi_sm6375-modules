@@ -26,37 +26,6 @@
 #define SDE_FENCE_NAME_SIZE	24
 
 #define MAX_SDE_HFENCE_OUT_SIGNAL_PING_PONG 2
-
-/**
- * enum sde_fence_error_state - fence error state handled in _sde_fence_trigger
- * @NO_ERROR: no fence error
- * @SET_ERROR_ONLY_CMD_RELEASE: cmd panel release fence error state
- * @SET_ERROR_ONLY_CMD_RETIRE: cmd panel retire fence error state
- * @SET_ERROR_ONLY_VID: vid panel fence error state
- * @HANDLE_OUT_OF_ORDER: vid panel out of order handle
- */
-enum sde_fence_error_state {
-	NO_ERROR,
-	SET_ERROR_ONLY_CMD_RELEASE,
-	SET_ERROR_ONLY_CMD_RETIRE,
-	SET_ERROR_ONLY_VID,
-	HANDLE_OUT_OF_ORDER,
-};
-
-/**
- * sde_fence_error_ctx - reserve frame info for fence error handing
- * @last_good_frame_fence_seqno: last good frame fence seqno
- * @curr_frame_fence_seqno: currently frame fence seqno
- * @fence_error_status: fence error status
- * @sde_fence_error_state: fence error state
- */
-struct sde_fence_error_ctx {
-	u32 last_good_frame_fence_seqno;
-	u32 curr_frame_fence_seqno;
-	int fence_error_status;
-	enum sde_fence_error_state fence_error_state;
-};
-
 /**
  * struct sde_fence_context - release/retire fence context/timeline structure
  * @commit_count: Number of detected commits since bootup
@@ -66,7 +35,6 @@ struct sde_fence_error_ctx {
  * @lock: spinlock for fence counter protection
  * @list_lock: spinlock for timeline protection
  * @context: fence context
- * @sde_fence_error_ctx: sde fence error context
  * @list_head: fence list to hold all the fence created on this context
  * @name: name of fence context/timeline
  */
@@ -78,19 +46,8 @@ struct sde_fence_context {
 	spinlock_t lock;
 	spinlock_t list_lock;
 	u64 context;
-	struct sde_fence_error_ctx sde_fence_error_ctx;
 	struct list_head fence_list_head;
 	char name[SDE_FENCE_NAME_SIZE];
-};
-
-/**
- * struct sde_hw_fence_error_cb_data - struct passed back in fence error callback
- * @ctl_idx: control path index
- * @sde_kms: handle to sde_kms
- */
-struct sde_hw_fence_error_cb_data {
-	int ctl_idx;
-	struct sde_kms *sde_kms;
 };
 
 /**
@@ -121,7 +78,6 @@ enum sde_fence_event {
  * @ipcc_this_client: ipcc dpu client id (For Waipio: APPS, For Kailua: DPU HW)
  * @dma_context: per client dma context used to create join fences
  * @hw_fence_array_seqno: per-client seq number counter for join fences
- * @sde_hw_fence_error_cb_data: data needed for hw fence cb function.
  */
 struct sde_hw_fence_data {
 	int client_id;
@@ -138,7 +94,6 @@ struct sde_hw_fence_data {
 	u32 ipcc_this_client;
 	u64 dma_context;
 	u32 hw_fence_array_seqno;
-	struct sde_hw_fence_error_cb_data sde_hw_fence_error_cb_data;
 };
 
 #if IS_ENABLED(CONFIG_SYNC_FILE)
@@ -168,14 +123,13 @@ void sde_sync_put(void *fence);
  *
  * @fence: Pointer to sync fence
  * @timeout_ms: Time to wait, in milliseconds. Waits forever if timeout_ms < 0
- * @error_status: status of fence
  *
  * Return:
  * Zero if timed out
  * -ERESTARTSYS if wait interrupted
  * remaining jiffies in all other success cases.
  */
-signed long sde_sync_wait(void *fence, long timeout_ms, int *error_status);
+signed long sde_sync_wait(void *fence, long timeout_ms);
 
 /**
  * sde_sync_get_name_prefix - get integer representation of fence name prefix
@@ -202,14 +156,12 @@ struct sde_fence_context *sde_fence_init(const char *name,
  * sde_fence_hw_fence_init - initialize hw-fence clients
  *
  * @hw_ctl: hw ctl client to init.
- * @sde_kms: used for hw fence error cb register.
  * @use_ipcc: boolean to indicate if hw should use dpu ipcc signals.
  * @mmu: mmu to map memory for queues
  *
  * Returns: Zero on success, otherwise returns an error code.
  */
-int sde_hw_fence_init(struct sde_hw_ctl *hw_ctl, struct sde_kms *sde_kms, bool use_dpu_ipcc,
-	struct msm_mmu *mmu);
+int sde_hw_fence_init(struct sde_hw_ctl *hw_ctl, bool use_dpu_ipcc, struct msm_mmu *mmu);
 
 /**
  * sde_fence_hw_fence_deinit - deinitialize hw-fence clients
@@ -262,17 +214,6 @@ int sde_fence_update_hw_fences_txq(struct sde_fence_context *ctx, bool vid_mode,
  */
 int sde_fence_update_input_hw_fence_signal(struct sde_hw_ctl *ctl, u32 debugfs_hw_fence,
 	struct sde_hw_mdp *hw_mdp, bool disable);
-
-/**
- * sde_fence_error_ctx_update - update fence_error_state and fence_error_status in
- *                              sde_fence_error_ctx.
- *
- * @ctx: sde_fence_context
- * @input_fence_status: input fence status, negative if input fence error
- * @sde_fence_error_state: sde fence error state
- */
-void sde_fence_error_ctx_update(struct sde_fence_context *ctx, int input_fence_status,
-	enum sde_fence_error_state sde_fence_error_state);
 
 /**
  * sde_fence_deinit - deinit fence container
@@ -347,7 +288,7 @@ static inline void sde_sync_put(void *fence)
 {
 }
 
-static inline signed long sde_sync_wait(void *fence, long timeout_ms, int *error_status)
+static inline signed long sde_sync_wait(void *fence, long timeout_ms)
 {
 	return 0;
 }

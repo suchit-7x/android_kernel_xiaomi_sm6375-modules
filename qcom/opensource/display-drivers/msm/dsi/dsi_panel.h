@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -12,7 +12,6 @@
 #include <linux/bitops.h>
 #include <linux/errno.h>
 #include <linux/backlight.h>
-#include <linux/i2c.h>
 #include <drm/drm_panel.h>
 #include <drm/msm_drm.h>
 #include <drm/msm_drm_pp.h>
@@ -24,14 +23,25 @@
 #include "dsi_parser.h"
 #include "msm_drv.h"
 
+#ifdef MI_DISPLAY_MODIFY
+#include "mi_dsi_panel.h"
+#include "mi_dsi_panel_count.h"
+#endif
 #define MAX_BL_LEVEL 4096
 #define MAX_BL_SCALE_LEVEL 1024
 #define MAX_SV_BL_SCALE_LEVEL 65535
 #define SV_BL_SCALE_CAP (MAX_SV_BL_SCALE_LEVEL * 4)
 #define DSI_CMD_PPS_SIZE 135
 
+#ifdef MI_DISPLAY_MODIFY
+#define PEAK_HDR_BL_LEVEL 3901
+#endif
+
 #define DSI_CMD_PPS_HDR_SIZE 7
 #define DSI_MODE_MAX 32
+#ifdef MI_DISPLAY_MODIFY
+#define DIM_PARAM 4094
+#endif
 
 /*
  * Defining custom dsi msg flag.
@@ -131,11 +141,16 @@ struct dsi_backlight_config {
 	u32 bl_min_level;
 	u32 bl_max_level;
 	u32 brightness_max_level;
+#ifdef MI_DISPLAY_MODIFY
+	u32 brightness_init_level;
+#endif
 	/* current brightness value */
 	u32 brightness;
 	u32 bl_level;
 	u32 bl_scale;
 	u32 bl_scale_sv;
+	u32 bl_dcs_subtype;
+	u32 bl_lcd_number;
 	bool bl_inverted_dbv;
 	/* digital dimming backlight LUT */
 	struct drm_msm_dimming_bl_lut *dimming_bl_lut;
@@ -167,6 +182,8 @@ struct dsi_panel_reset_config {
 	u32 count;
 
 	int reset_gpio;
+        int lcm_enp_gpio;
+	int lcm_enn_gpio;
 	int disp_en_gpio;
 	int lcd_mode_sel_gpio;
 	u32 mode_sel_state;
@@ -183,8 +200,16 @@ enum esd_check_status_mode {
 
 struct drm_panel_esd_config {
 	bool esd_enabled;
+#ifdef MI_DISPLAY_MODIFY
+	bool esd_aod_enabled;
+	u32 esd_status_interval;
+#endif
 
 	enum esd_check_status_mode status_mode;
+#ifdef MI_DISPLAY_MODIFY
+	struct dsi_panel_cmd_set offset_cmd;
+	struct dsi_panel_cmd_set after_cmd;
+#endif
 	struct dsi_panel_cmd_set status_cmd;
 	u32 *status_cmds_rlen;
 	u32 *status_valid_params;
@@ -192,30 +217,16 @@ struct drm_panel_esd_config {
 	u8 *return_buf;
 	u8 *status_buf;
 	u32 groups;
+
+	int esd_err_irq_gpio;
+	int esd_err_irq;
+	int esd_err_irq_flags;
+	bool esd_err_enabled;
 };
 
 struct dsi_panel_spr_info {
 	bool enable;
 	enum msm_display_spr_pack_type pack_type;
-};
-
-struct dsi_panel_i2c_cmd {
-	const u8 *data;
-	u32 len;
-	u32 post_wait_ms;
-	u8 slave_addr;
-};
-
-struct dsi_panel_i2c_cmd_set {
-	struct dsi_panel_i2c_cmd *cmds;
-	u32 count;
-};
-
-struct dsi_panel_i2c_config {
-	bool i2c_support;
-	struct i2c_adapter *left_adapter;
-	struct i2c_adapter *right_adapter;
-	struct dsi_panel_i2c_cmd_set cmd_set;
 };
 
 struct dsi_panel;
@@ -230,11 +241,6 @@ struct dsi_panel_ops {
 	int (*parse_gpios)(struct dsi_panel *panel);
 	int (*parse_power_cfg)(struct dsi_panel *panel);
 	int (*trigger_esd_attack)(struct dsi_panel *panel);
-};
-
-struct dsi_panel_calib_data {
-	char *data;
-	size_t len;
 };
 
 struct dsi_panel {
@@ -271,6 +277,11 @@ struct dsi_panel {
 	struct dsi_pinctrl_info pinctrl;
 	struct drm_panel_hdr_properties hdr_props;
 	struct drm_panel_esd_config esd_config;
+#ifdef MI_DISPLAY_MODIFY
+	struct drm_panel_build_id_config id_config;
+	struct drm_panel_wp_config wp_config;
+	struct drm_panel_cell_id_config cell_id_config;
+#endif
 
 	struct dsi_parser_utils utils;
 
@@ -279,8 +290,10 @@ struct dsi_panel {
 	bool ulps_suspend_enabled;
 	bool allow_phy_power_off;
 	bool reset_gpio_always_on;
-	bool calibration_enabled;
 	atomic_t esd_recovery_pending;
+
+	bool panel_status;
+	bool esd_status;
 
 	bool panel_initialized;
 	bool te_using_watchdog_timer;
@@ -301,8 +314,14 @@ struct dsi_panel {
 	enum dsi_panel_physical_type panel_type;
 
 	struct dsi_panel_ops panel_ops;
-	struct dsi_panel_calib_data calib_data;
-	struct dsi_panel_i2c_config i2c_config;
+
+#ifdef MI_DISPLAY_MODIFY
+	struct mi_dsi_panel_cfg mi_cfg;
+
+	struct mi_dsi_panel_count mi_count;
+	bool qsync_enable;
+	bool pending_backlight_by_qsync;
+#endif
 };
 
 static inline bool dsi_panel_ulps_feature_enabled(struct dsi_panel *panel)
@@ -386,6 +405,8 @@ int dsi_panel_unprepare(struct dsi_panel *panel);
 
 int dsi_panel_post_unprepare(struct dsi_panel *panel);
 
+int dsi_panel_lcd_bias_off(struct dsi_panel *panel);
+
 int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl);
 
 int dsi_panel_update_pps(struct dsi_panel *panel);
@@ -439,4 +460,22 @@ int dsi_panel_create_cmd_packets(const char *data, u32 length, u32 count,
 void dsi_panel_destroy_cmd_packets(struct dsi_panel_cmd_set *set);
 
 void dsi_panel_dealloc_cmd_packets(struct dsi_panel_cmd_set *set);
+#ifdef MI_DISPLAY_MODIFY
+int dsi_panel_get_cmd_pkt_count(const char *data, u32 length, u32 *cnt);
+int dsi_panel_alloc_cmd_packets(struct dsi_panel_cmd_set *cmd,
+				u32 packet_count);
+int dsi_panel_create_cmd_packets(const char *data,
+				u32 length, u32 count, struct dsi_cmd_desc *cmd);
+void dsi_panel_destroy_cmd_packets(struct dsi_panel_cmd_set *set);
+void dsi_panel_dealloc_cmd_packets(struct dsi_panel_cmd_set *set);
+int dsi_panel_tx_cmd_set(struct dsi_panel *panel,
+		enum dsi_cmd_set_type type);
+int dsi_panel_update_backlight(struct dsi_panel *panel, u32 bl_lvl);
+
+int dsi_panel_parse_cmd_sets_sub(struct dsi_panel_cmd_set *cmd,
+					enum dsi_cmd_set_type type,
+					struct dsi_parser_utils *utils);
+
+
+#endif /* MI_DISPLAY_MODIFY*/
 #endif /* _DSI_PANEL_H_ */

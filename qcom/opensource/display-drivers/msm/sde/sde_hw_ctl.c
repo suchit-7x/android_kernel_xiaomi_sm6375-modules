@@ -29,7 +29,6 @@
 #define CTL_SW_RESET                  0x030
 #define CTL_SW_RESET_OVERRIDE         0x060
 #define CTL_STATUS                    0x064
-#define CTL_FLUSH_MASK                0x090
 #define CTL_LAYER_EXTN_OFFSET         0x40
 #define CTL_ROT_TOP                   0x0C0
 #define CTL_ROT_FLUSH                 0x0C4
@@ -474,15 +473,6 @@ static inline int sde_hw_ctl_trigger_pending(struct sde_hw_ctl *ctx)
 		return -EINVAL;
 
 	SDE_REG_WRITE(&ctx->hw, CTL_PREPARE, 0x1);
-	return 0;
-}
-
-static inline int sde_hw_ctl_clear_flush_mask(struct sde_hw_ctl *ctx, bool clear)
-{
-	if (!ctx)
-		return -EINVAL;
-
-	SDE_REG_WRITE(&ctx->hw, CTL_FLUSH_MASK, clear ? 0xffffffff : 0);
 	return 0;
 }
 
@@ -994,13 +984,8 @@ static void sde_hw_ctl_clear_all_blendstages(struct sde_hw_ctl *ctx)
 		return;
 
 	c = &ctx->hw;
-	SDE_REG_WRITE(c, CTL_FETCH_PIPE_ACTIVE, 0);
-
 	for (i = 0; i < ctx->mixer_count; i++) {
 		int mixer_id = ctx->mixer_hw_caps[i].id;
-
-		if (mixer_id >= LM_DCWB_DUMMY_0)
-			break;
 
 		SDE_REG_WRITE(c, CTL_LAYER(mixer_id), 0);
 		SDE_REG_WRITE(c, CTL_LAYER_EXT(mixer_id), 0);
@@ -1008,6 +993,7 @@ static void sde_hw_ctl_clear_all_blendstages(struct sde_hw_ctl *ctx)
 		SDE_REG_WRITE(c, CTL_LAYER_EXT3(mixer_id), 0);
 		SDE_REG_WRITE(c, CTL_LAYER_EXT4(mixer_id), 0);
 	}
+	SDE_REG_WRITE(c, CTL_FETCH_PIPE_ACTIVE, 0);
 }
 
 static void _sde_hw_ctl_get_mixer_cfg(struct sde_hw_ctl *ctx,
@@ -1487,7 +1473,6 @@ static void _setup_ctl_ops(struct sde_hw_ctl_ops *ops,
 		ops->update_bitmask = sde_hw_ctl_update_bitmask;
 		ops->get_ctl_intf = sde_hw_ctl_get_intf;
 	}
-	ops->clear_flush_mask = sde_hw_ctl_clear_flush_mask;
 	ops->clear_pending_flush = sde_hw_ctl_clear_pending_flush;
 	ops->get_pending_flush = sde_hw_ctl_get_pending_flush;
 	ops->get_flush_register = sde_hw_ctl_get_flush_register;

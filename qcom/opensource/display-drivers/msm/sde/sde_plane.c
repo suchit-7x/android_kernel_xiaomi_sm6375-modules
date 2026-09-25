@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (C) 2014-2021 The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -502,9 +502,6 @@ static void _sde_plane_set_qos_remap(struct drm_plane *plane)
 		return;
 	}
 
-	if (psde->is_virtual)
-		return;
-
 	memset(&qos_params, 0, sizeof(qos_params));
 	qos_params.vbif_idx = VBIF_RT;
 	qos_params.clk_ctrl = psde->pipe_hw->cap->clk_ctrl;
@@ -640,7 +637,7 @@ bool sde_plane_is_sw_fence_signaled(struct drm_plane *plane)
 	return false;
 }
 
-int sde_plane_wait_input_fence(struct drm_plane *plane, uint32_t wait_ms, int *error_status)
+int sde_plane_wait_input_fence(struct drm_plane *plane, uint32_t wait_ms)
 {
 	struct sde_plane *psde;
 	struct sde_plane_state *pstate;
@@ -660,13 +657,14 @@ int sde_plane_wait_input_fence(struct drm_plane *plane, uint32_t wait_ms, int *e
 
 		if (input_fence) {
 			prefix = sde_sync_get_name_prefix(input_fence);
-			rc = sde_sync_wait(input_fence, wait_ms, error_status);
+			rc = sde_sync_wait(input_fence, wait_ms);
 
 			switch (rc) {
 			case 0:
 				SDE_ERROR_PLANE(psde, "%ums timeout on %08X fd %lld\n",
 						wait_ms, prefix, sde_plane_get_property(pstate,
 						PLANE_PROP_INPUT_FENCE));
+				psde->is_error = true;
 				sde_kms_timeline_status(plane->dev);
 				ret = -ETIMEDOUT;
 				break;
@@ -688,6 +686,7 @@ int sde_plane_wait_input_fence(struct drm_plane *plane, uint32_t wait_ms, int *e
 				SDE_INFO("plane%d spec fd signaled on bind failure fd %lld\n",
 					plane->base.id,
 					sde_plane_get_property(pstate, PLANE_PROP_INPUT_FENCE));
+				psde->is_error = true;
 				ret = 0;
 				break;
 			default:

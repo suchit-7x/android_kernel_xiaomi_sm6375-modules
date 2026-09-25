@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -82,6 +82,23 @@ struct dp_panel_private {
 	u8 spd_product_description[16];
 	u8 major;
 	u8 minor;
+};
+
+static const struct dp_panel_info fail_safe = {
+	.h_active = 640,
+	.v_active = 480,
+	.h_back_porch = 48,
+	.h_front_porch = 16,
+	.h_sync_width = 96,
+	.h_active_low = 0,
+	.v_back_porch = 33,
+	.v_front_porch = 10,
+	.v_sync_width = 2,
+	.v_active_low = 0,
+	.h_skew = 0,
+	.refresh_rate = 60,
+	.pixel_clk_khz = 25200,
+	.bpp = 24,
 };
 
 /* OEM NAME */
@@ -1275,7 +1292,7 @@ static void _dp_panel_dsc_get_num_extra_pclk(struct msm_compression_info *comp_i
 	else
 		dsc->extra_width = 0;
 
-	DP_DEBUG_V("extra pclks required: %d\n", dsc->extra_width);
+	DP_DEBUG("extra pclks required: %d\n", dsc->extra_width);
 }
 
 static void _dp_panel_dsc_bw_overhead_calc(struct dp_panel *dp_panel,
@@ -1304,7 +1321,7 @@ static void _dp_panel_dsc_bw_overhead_calc(struct dp_panel *dp_panel,
 	dwidth_dsc_bytes = tot_num_hor_bytes + tot_num_eoc_symbols +
 				tot_num_dummy_bytes;
 
-	DP_DEBUG_V("dwidth_dsc_bytes:%d, tot_num_hor_bytes:%d\n",
+	DP_DEBUG("dwidth_dsc_bytes:%d, tot_num_hor_bytes:%d\n",
 			dwidth_dsc_bytes, tot_num_hor_bytes);
 
 	dp_mode->dsc_overhead_fp = drm_fixp_from_fraction(dwidth_dsc_bytes,
@@ -1471,7 +1488,7 @@ static int dp_panel_dsc_prepare_basic_params(
 			(dsc_version_minor == 0x1 || dsc_version_minor == 0x2))
 			? true : false;
 
-	DP_DEBUG_V("DSC version: %d.%d, dpcd value: %x\n",
+	DP_DEBUG("DSC version: %d.%d, dpcd value: %x\n",
 			dsc_version_major, dsc_version_minor,
 			dp_panel->sink_dsc_caps.version);
 
@@ -1523,7 +1540,7 @@ static int dp_panel_dsc_prepare_basic_params(
 	 * 2. The ppr per slice cannot exceed the maximum.
 	 * 3. The number of slices must be explicitly supported.
 	 */
-	while (slice_width > max_slice_width ||
+	while (slice_width >= max_slice_width ||
 			ppr_per_slice > peak_throughput ||
 			!dp_panel_check_slice_support(
 			comp_info->dsc_info.slice_per_pkt, slice_caps_1,
@@ -1576,8 +1593,6 @@ static int dp_panel_read_dpcd(struct dp_panel *dp_panel, bool multi_func)
 	struct dp_panel_private *panel;
 	struct drm_dp_link *link_info;
 	struct drm_dp_aux *drm_aux;
-	struct drm_connector *connector;
-	struct sde_connector *sde_conn;
 	u8 *dpcd, rx_feature, temp;
 	u32 dfp_count = 0, offset = DP_DPCD_REV;
 
@@ -1598,8 +1613,6 @@ static int dp_panel_read_dpcd(struct dp_panel *dp_panel, bool multi_func)
 	panel->vscext_supported = false;
 	panel->vscext_chaining_supported = false;
 
-	connector = dp_panel->connector;
-	sde_conn = to_sde_connector(connector);
 	rlen = drm_dp_dpcd_read(drm_aux, DP_TRAINING_AUX_RD_INTERVAL, &temp, 1);
 	if (rlen != 1) {
 		DP_ERR("error reading DP_TRAINING_AUX_RD_INTERVAL\n");
@@ -1641,7 +1654,6 @@ static int dp_panel_read_dpcd(struct dp_panel *dp_panel, bool multi_func)
 		panel->vscext_chaining_supported = !!(rx_feature &
 				VSC_EXT_VESA_SDP_CHAINING_SUPPORTED);
 
-		sde_conn->hdr_supported = panel->vsc_supported;
 		DP_DEBUG("vsc=%d, vscext=%d, vscext_chaining=%d\n",
 				panel->vsc_supported, panel->vscext_supported,
 				panel->vscext_chaining_supported);
@@ -2048,7 +2060,10 @@ static int dp_panel_get_modes(struct dp_panel *dp_panel,
 		return _sde_edid_update_modes(connector, dp_panel->edid_ctrl);
 	}
 
-	return 0;
+	/* fail-safe mode */
+	memcpy(&mode->timing, &fail_safe,
+		sizeof(fail_safe));
+	return 1;
 }
 
 static void dp_panel_handle_sink_request(struct dp_panel *dp_panel)
@@ -2372,9 +2387,6 @@ static int dp_panel_deinit_panel_info(struct dp_panel *dp_panel, u32 flags)
 	dhdr_vsif_sdp = &panel->catalog->dhdr_vsif_sdp;
 	shdr_if_sdp = &panel->catalog->shdr_if_sdp;
 	vsc_colorimetry = &panel->catalog->vsc_colorimetry;
-
-	/*clearing LINK INFO capabilities during disconnect*/
-	dp_panel->link_info.capabilities = 0;
 
 	if (dp_panel->edid_ctrl->edid)
 		sde_free_edid((void **)&dp_panel->edid_ctrl);
@@ -3022,8 +3034,12 @@ static void dp_panel_convert_to_dp_mode(struct dp_panel *dp_panel,
 			DP_DEBUG("prepare DSC basic params failed\n");
 			return;
 		}
-
+#ifdef MI_DISPLAY_MODIFY
+		rc = sde_dsc_populate_dsc_config(&comp_info->dsc_info.config, 0, 0);
+#else
 		rc = sde_dsc_populate_dsc_config(&comp_info->dsc_info.config, 0);
+#endif
+
 		if (rc) {
 			DP_DEBUG("failed populating dsc params \n");
 			return;

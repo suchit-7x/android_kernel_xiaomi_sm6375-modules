@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -531,33 +531,8 @@ static void _sde_core_uidle_setup_wd(struct sde_kms *kms,
 		uidle->ops.setup_wd_timer(uidle, &wd);
 }
 
-static bool _sde_core_uidle_fal10_override(struct sde_kms *kms,
-	struct drm_crtc *crtc)
-{
-	bool fal10_override, is_vid_mode = false;
-	struct drm_encoder *drm_enc;
-
-	fal10_override = kms->catalog->uidle_cfg.fal10_override;
-	if (!fal10_override)
-		return false;
-
-	drm_for_each_encoder(drm_enc, kms->dev) {
-		if (drm_enc->crtc != crtc)
-			continue;
-
-		if (sde_encoder_check_curr_mode(drm_enc, MSM_DISPLAY_VIDEO_MODE)) {
-			is_vid_mode = true;
-			break;
-		}
-	}
-
-	SDE_EVT32(fal10_override, is_vid_mode);
-
-	return fal10_override && is_vid_mode;
-}
-
 static void _sde_core_uidle_setup_cfg(struct sde_kms *kms,
-	struct drm_crtc *crtc, enum sde_uidle_state state)
+	enum sde_uidle_state state)
 {
 	struct sde_uidle_ctl_cfg cfg;
 	struct sde_hw_uidle *uidle;
@@ -570,7 +545,6 @@ static void _sde_core_uidle_setup_cfg(struct sde_kms *kms,
 		kms->catalog->uidle_cfg.fal10_exit_cnt;
 	cfg.fal10_exit_danger =
 		kms->catalog->uidle_cfg.fal10_exit_danger;
-	cfg.fal10_override = _sde_core_uidle_fal10_override(kms, crtc);
 
 	SDE_DEBUG("fal10_danger:%d fal10_exit_cnt:%d fal10_exit_danger:%d\n",
 		cfg.fal10_danger, cfg.fal10_exit_cnt, cfg.fal10_exit_danger);
@@ -610,7 +584,7 @@ static int _sde_core_perf_enable_uidle(struct sde_kms *kms,
 
 	SDE_EVT32(uidle_state);
 	_sde_core_uidle_setup_wd(kms, enable);
-	_sde_core_uidle_setup_cfg(kms, crtc, uidle_state);
+	_sde_core_uidle_setup_cfg(kms, uidle_state);
 	sde_core_perf_uidle_setup_ctl(crtc, true);
 
 	kms->perf.uidle_enabled = enable;
@@ -982,16 +956,32 @@ static void _sde_core_perf_crtc_update_check(struct drm_crtc *crtc,
 		if ((params_changed &&
 				(new->bw_ctl[i] > old->bw_ctl[i])) ||
 				(!params_changed &&
-				(new->bw_ctl[i] < old->bw_ctl[i])))
+				(new->bw_ctl[i] < old->bw_ctl[i]))) {
+
+			SDE_DEBUG(
+				"crtc=%d p=%d new_bw=%llu,old_bw=%llu\n",
+				crtc->base.id, params_changed,
+				new->bw_ctl[i], old->bw_ctl[i]);
+			old->bw_ctl[i] = new->bw_ctl[i];
 			*update_bus |= BIT(i);
+		}
 
 		if ((params_changed &&
 				(new->max_per_pipe_ib[i] >
 				 old->max_per_pipe_ib[i])) ||
 				(!params_changed &&
 				(new->max_per_pipe_ib[i] <
-				old->max_per_pipe_ib[i])))
+				old->max_per_pipe_ib[i]))) {
+
+			SDE_DEBUG(
+				"crtc=%d p=%d new_ib=%llu,old_ib=%llu\n",
+				crtc->base.id, params_changed,
+				new->max_per_pipe_ib[i],
+				old->max_per_pipe_ib[i]);
+			old->max_per_pipe_ib[i] =
+					new->max_per_pipe_ib[i];
 			*update_bus |= BIT(i);
+		}
 
 		/* display rsc override during solver mode */
 		if (kms->perf.bw_vote_mode == DISP_RSC_MODE &&
@@ -1002,6 +992,9 @@ static void _sde_core_perf_crtc_update_check(struct drm_crtc *crtc,
 					old->bw_ctl[i]) ||
 					(new->max_per_pipe_ib[i] !=
 					old->max_per_pipe_ib[i]))) {
+				old->bw_ctl[i] = new->bw_ctl[i];
+				old->max_per_pipe_ib[i] =
+						new->max_per_pipe_ib[i];
 				*update_bus |= BIT(i);
 			/*
 			 * reduce bw vote is not required in solver
@@ -1010,15 +1003,6 @@ static void _sde_core_perf_crtc_update_check(struct drm_crtc *crtc,
 			} else if (!params_changed) {
 				*update_bus &= ~BIT(i);
 			}
-		}
-
-		if ((*update_bus) & BIT(i)) {
-			SDE_DEBUG(
-				"crtc=%d p=%d new_bw=%llu,old_bw=%llu new_ib=%llu old_ib=%llu\n",
-				crtc->base.id, params_changed, new->bw_ctl[i], old->bw_ctl[i],
-				new->max_per_pipe_ib[i], old->max_per_pipe_ib[i]);
-			old->bw_ctl[i] = new->bw_ctl[i];
-			old->max_per_pipe_ib[i] = new->max_per_pipe_ib[i];
 		}
 	}
 
@@ -1079,15 +1063,6 @@ void sde_core_perf_crtc_update(struct drm_crtc *crtc,
 
 	old = &sde_crtc->cur_perf;
 	new = &sde_crtc->new_perf;
-
-	/* avoid the voting in fence error case when there is decrease in BW vote */
-	if (!params_changed && !stop_req && sde_crtc->handle_fence_error_bw_update) {
-		new = &sde_crtc->cur_perf;
-		SDE_EVT32(kms->dev, params_changed, stop_req,
-			sde_crtc->handle_fence_error_bw_update);
-
-		sde_crtc->handle_fence_error_bw_update = false;
-	}
 
 	if (_sde_core_perf_crtc_is_power_on(crtc) && !stop_req) {
 		_sde_core_perf_crtc_update_check(crtc, params_changed,

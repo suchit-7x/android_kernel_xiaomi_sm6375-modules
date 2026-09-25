@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -536,7 +536,7 @@ static int msm_gem_get_iova_locked(struct drm_gem_object *obj,
 		msm_gem_add_obj_to_aspace_active_list(aspace, obj);
 		mutex_unlock(&aspace->list_lock);
 	}
-	if (dev && !dev_is_dma_coherent(dev) && (msm_obj->flags & MSM_BO_CACHED)) {
+	if (dev && !dev_is_dma_coherent(dev) && (msm_obj->flags & MSM_BO_CACHED)){
 		dma_sync_sg_for_cpu(dev, msm_obj->sgt->sgl,
 				msm_obj->sgt->nents, DMA_BIDIRECTIONAL);
 	}

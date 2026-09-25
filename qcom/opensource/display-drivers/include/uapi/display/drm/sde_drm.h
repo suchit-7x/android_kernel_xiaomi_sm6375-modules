@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 /*
- * Copyright (c) 2021-2023, 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -72,13 +72,6 @@ extern "C" {
  *					base-format specific.
  */
 #define DRM_FORMAT_MOD_QCOM_ALPHA_SWAP	fourcc_mod_code(QCOM, 0x10)
-
-/**
- * @DRM_FORMAT_MOD_QCOM_FSC_TILE:	Refers to a tile variant of the
- *					planar format. Implementation may be
- *					platform and base-format specific.
- */
-#define DRM_FORMAT_MOD_QCOM_FSC_TILE       fourcc_mod_code(QCOM, 0x400)
 
 /**
  * Blend operations for "blend_op" property
@@ -526,22 +519,15 @@ struct sde_drm_wb_cfg {
 };
 
 #define SDE_MAX_ROI_V1	4
-#define SDE_DRM_SPR_ROI	1
-/* DRM_ROI_CONFIG_FLAGS */
-#define SDE_DRM_ROI_SPR_FLAG_EN	(1 << 0)
 
 /**
  * struct sde_drm_roi_v1 - list of regions of interest for a drm object
  * @num_rects: number of valid rectangles in the roi array
  * @roi: list of roi rectangles
- * @roi_feature_flags: flags indicates that specific roi rect is valid or not
- * @spr_roi: list of roi rectangles for spr
  */
 struct sde_drm_roi_v1 {
 	__u32 num_rects;
 	struct drm_clip_rect roi[SDE_MAX_ROI_V1];
-	__u32 roi_feature_flags;
-	struct drm_clip_rect spr_roi[SDE_MAX_ROI_V1];
 };
 
 /**
@@ -944,13 +930,6 @@ struct sde_drm_dnsc_blur_cfg {
 #endif
 #ifndef DRM_MODE_FLAG_CMD_MODE_PANEL
 #define DRM_MODE_FLAG_CMD_MODE_PANEL        0x02
-#endif
-
-#ifndef DRM_MODE_FLAG_DSI_24BPP
-#define DRM_MODE_FLAG_DSI_24BPP             0x01
-#endif
-#ifndef DRM_MODE_FLAG_DSI_30BPP
-#define DRM_MODE_FLAG_DSI_30BPP             0x02
 #endif
 
 /* display hint flags*/

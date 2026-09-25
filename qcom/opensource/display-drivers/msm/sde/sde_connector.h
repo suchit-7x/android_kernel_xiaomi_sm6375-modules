@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -15,6 +15,9 @@
 #include "msm_prop.h"
 #include "sde_kms.h"
 #include "sde_fence.h"
+#ifdef MI_DISPLAY_MODIFY
+#include "mi_sde_connector.h"
+#endif
 
 #define SDE_CONNECTOR_NAME_SIZE	16
 #define SDE_CONNECTOR_DHDR_MEMPOOL_MAX_SIZE	SZ_32
@@ -568,7 +571,6 @@ struct sde_misr_sign {
  * @qsync_mode: Cached Qsync mode, 0=disabled, 1=continuous mode
  * @qsync_updated: Qsync settings were updated
  * @ept_fps: ept fps is updated, 0 means ept_fps is disabled
- * @capabilities: display capabilities of the hardware
  * @colorspace_updated: Colorspace property was updated
  * @last_cmd_tx_sts: status of the last command transfer
  * @hdr_capable: external hdr support present
@@ -578,7 +580,6 @@ struct sde_misr_sign {
  * @misr_event_notify_enabled: Flag to indicate if misr event notify is enabled or not
  * @previous_misr_sign: store previous misr signature
  * @hwfence_wb_retire_fences_enable: enable hw-fences for wb retire-fence
- * @max_mode_width: max width of all available modes
  */
 struct sde_connector {
 	struct drm_connector base;
@@ -601,6 +602,9 @@ struct sde_connector {
 	int dpms_mode;
 	int lp_mode;
 	int last_panel_power_mode;
+#ifdef MI_DISPLAY_MODIFY
+	int max_esd_check_power_mode;
+#endif
 
 	struct msm_property_info property_info;
 	struct msm_property_data property_data[CONNECTOR_PROP_COUNT];
@@ -610,6 +614,9 @@ struct sde_connector {
 	struct drm_property_blob *blob_dither;
 	struct drm_property_blob *blob_mode_info;
 	struct drm_property_blob *blob_panel_id;
+#ifdef MI_DISPLAY_MODIFY
+	struct drm_property_blob *blob_mi_mode_info;
+#endif
 
 	struct sde_connector_evt event_table[SDE_CONN_EVENT_COUNT];
 	spinlock_t event_lock;
@@ -646,8 +653,6 @@ struct sde_connector {
 	bool qsync_updated;
 	u32 ept_fps;
 
-	u32 capabilities;
-
 	bool colorspace_updated;
 
 	bool last_cmd_tx_sts;
@@ -661,8 +666,7 @@ struct sde_connector {
 	struct sde_misr_sign previous_misr_sign;
 
 	bool hwfence_wb_retire_fences_enable;
-
-	u32 max_mode_width;
+	bool shared;
 };
 
 /**
@@ -789,6 +793,21 @@ struct sde_connector_state {
 #define sde_connector_get_out_fb(S) \
 	((S) ? to_sde_connector_state((S))->out_fb : 0)
 
+#ifdef MI_DISPLAY_MODIFY
+/**
+ * sde_connector_update_panel_dead - update connector panel_dead property
+ * @conn: pointer to drm connector
+ * @is_dead: bool to set panel_dead property
+ */
+void sde_connector_update_panel_dead(struct drm_connector *conn, bool is_dead);
+
+/*
+ * _sde_connector_report_panel_dead - report panel dead notification
+ * @sde_conn:    Pointer to sde connector structure
+ * @skip_pre_kickoff: boolean to skip pre kickoff
+ */
+void _sde_connector_report_panel_dead(struct sde_connector *conn, bool skip_pre_kickoff);
+#endif
 /**
  * sde_connector_get_kms - helper to get sde_kms from connector
  * @conn: Pointer to drm connector
@@ -945,6 +964,7 @@ int sde_connector_set_property_for_commit(struct drm_connector *connector,
  * @ops: Pointer to callback operations function table
  * @connector_poll: Set to appropriate DRM_CONNECTOR_POLL_ setting
  * @connector_type: Set to appropriate DRM_MODE_CONNECTOR_ type
+  * @shared: Flag to identify if a connector is sharing resource of its parent in SHD
  * Returns: Pointer to newly created drm connector struct
  */
 struct drm_connector *sde_connector_init(struct drm_device *dev,
@@ -953,16 +973,7 @@ struct drm_connector *sde_connector_init(struct drm_device *dev,
 		void *display,
 		const struct sde_connector_ops *ops,
 		int connector_poll,
-		int connector_type);
-
-/**
- * sde_connector_fence_error_ctx_signal - sde fence error context update for retire fence
- * @conn: Pointer to drm connector object
- * @input_fence_status: input fence status, negative if input fence error
- * @is_vid：if encoder is video mode
- */
-void sde_connector_fence_error_ctx_signal(struct drm_connector *conn, int input_fence_status,
-		bool is_vid);
+		int connector_type, bool shared);
 
 /**
  * sde_connector_prepare_fence - prepare fence support for current commit
@@ -1389,11 +1400,6 @@ const char *sde_conn_get_topology_name(struct drm_connector *conn,
  */
 bool sde_connector_is_line_insertion_supported(struct sde_connector *sde_conn);
 
-/*
- * sde_connector_report_panel_dead - report panel dead notification
- * @sde_conn:    Pointer to sde connector structure
- * @skip_pre_kickoff: boolean to skip pre kickoff
- */
-void sde_connector_report_panel_dead(struct sde_connector *conn, bool skip_pre_kickoff);
+int _sde_connector_update_dirty_properties(struct drm_connector *connector);
 
 #endif /* _SDE_CONNECTOR_H_ */

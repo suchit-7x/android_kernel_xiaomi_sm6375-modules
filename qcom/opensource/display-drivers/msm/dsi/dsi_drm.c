@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -11,11 +11,20 @@
 
 #include "msm_kms.h"
 #include "sde_connector.h"
+#include "internals.h"
 #include "dsi_drm.h"
 #include "sde_trace.h"
 #include "sde_dbg.h"
 #include "msm_drv.h"
 #include "sde_encoder.h"
+
+#ifdef MI_DISPLAY_MODIFY
+#include <drm/mi_disp.h>
+
+#include "mi_disp_print.h"
+#include "mi_dsi_display.h"
+#include "mi_panel_id.h"
+#endif
 
 #define to_dsi_bridge(x)     container_of((x), struct dsi_bridge, base)
 #define to_dsi_state(x)      container_of((x), struct dsi_connector_state, base)
@@ -92,8 +101,6 @@ static void msm_parse_mode_priv_info(const struct msm_display_mode *msm_mode,
 		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_POMS_TO_CMD;
 	if (msm_is_mode_seamless_dyn_clk(msm_mode))
 		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_DYN_CLK;
-	if (msm_is_mode_bpp_switch(msm_mode))
-		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_NONDSC_BPP_SWITCH;
 }
 
 void dsi_convert_to_drm_mode(const struct dsi_display_mode *dsi_mode,
@@ -138,6 +145,16 @@ void dsi_convert_to_drm_mode(const struct dsi_display_mode *dsi_mode,
 	snprintf(drm_mode->name, DRM_DISPLAY_MODE_LEN, "%dx%dx%d%s",
 			drm_mode->hdisplay, drm_mode->vdisplay,
 			drm_mode_vrefresh(drm_mode), panel_caps);
+#ifdef MI_DISPLAY_MODIFY
+	if (dsi_mode->mi_timing.ddic_mode != DDIC_MODE_NORMAL) {
+		snprintf(drm_mode->name + strlen(drm_mode->name),
+				DRM_DISPLAY_MODE_LEN - strlen(drm_mode->name),
+				"@%dx%d%s",
+				dsi_mode->mi_timing.sf_refresh_rate,
+				dsi_mode->mi_timing.ddic_min_refresh_rate,
+				get_ddic_mode_name(dsi_mode->mi_timing.ddic_mode));
+	}
+#endif
 }
 
 static void dsi_convert_to_msm_mode(const struct dsi_display_mode *dsi_mode,
@@ -162,8 +179,6 @@ static void dsi_convert_to_msm_mode(const struct dsi_display_mode *dsi_mode,
 		msm_mode->private_flags |= MSM_MODE_FLAG_SEAMLESS_POMS_CMD;
 	if (dsi_mode->dsi_mode_flags & DSI_MODE_FLAG_DYN_CLK)
 		msm_mode->private_flags |= MSM_MODE_FLAG_SEAMLESS_DYN_CLK;
-	if (dsi_mode->dsi_mode_flags & DSI_MODE_FLAG_NONDSC_BPP_SWITCH)
-		msm_mode->private_flags |= MSM_MODE_FLAG_NONDSC_BPP_SWITCH;
 }
 
 static int dsi_bridge_attach(struct drm_bridge *bridge,
@@ -186,7 +201,10 @@ static void dsi_bridge_pre_enable(struct drm_bridge *bridge)
 {
 	int rc = 0;
 	struct dsi_bridge *c_bridge = to_dsi_bridge(bridge);
-
+#ifdef MI_DISPLAY_MODIFY
+	struct dsi_display *display;
+#endif
+	c_bridge->display->panel->panel_status = true;
 	if (!bridge) {
 		DSI_ERR("Invalid params\n");
 		return;
@@ -196,7 +214,9 @@ static void dsi_bridge_pre_enable(struct drm_bridge *bridge)
 		DSI_ERR("Incorrect bridge details\n");
 		return;
 	}
-
+#ifdef MI_DISPLAY_MODIFY
+	display = c_bridge->display;
+#endif
 	if (bridge->encoder->crtc->state->active_changed)
 		atomic_set(&c_bridge->display->panel->esd_recovery_pending, 0);
 
@@ -239,6 +259,47 @@ static void dsi_bridge_pre_enable(struct drm_bridge *bridge)
 	if (rc)
 		DSI_ERR("Continuous splash pipeline cleanup failed, rc=%d\n",
 									rc);
+#ifdef MI_DISPLAY_MODIFY
+	sde_connector_update_panel_dead(display->drm_conn, !display->panel->panel_initialized);
+#endif
+}
+
+int dsi_display_esd_irq_switch(struct dsi_panel *panel, bool enable)
+{
+	struct drm_panel_esd_config *esd_config;
+	struct irq_desc *desc;
+	esd_config = &panel->esd_config;
+
+	if (!panel || !panel->panel_initialized) {
+		DISP_ERROR("Panel not ready!\n");
+		return -EINVAL;
+	}
+	if (gpio_is_valid(esd_config->esd_err_irq_gpio)) {
+		if (esd_config->esd_err_irq) {
+			if (enable) {
+				if (!esd_config->esd_err_enabled) {
+					desc = irq_to_desc(esd_config->esd_err_irq);
+					if (!irq_settings_is_level(desc))
+						desc->istate &= ~IRQS_PENDING;
+					enable_irq_wake(esd_config->esd_err_irq);
+					enable_irq(esd_config->esd_err_irq);
+					esd_config->esd_err_enabled = true;
+					DISP_INFO("[%s] esd irq is enable\n", panel->type);
+				}
+			} else {
+				if (esd_config->esd_err_enabled) {
+					disable_irq_wake(esd_config->esd_err_irq);
+					disable_irq_nosync(esd_config->esd_err_irq);
+					esd_config->esd_err_enabled = false;
+					DISP_INFO("[%s] esd irq is disable\n", panel->type);
+				}
+			}
+		}
+	} else {
+		DISP_INFO("[%s] esd irq gpio invalid\n", panel->type);
+	}
+
+	return 0;
 }
 
 static void dsi_bridge_enable(struct drm_bridge *bridge)
@@ -259,6 +320,7 @@ static void dsi_bridge_enable(struct drm_bridge *bridge)
 		return;
 	}
 	display = c_bridge->display;
+	display->panel->panel_status = true;
 
 	rc = dsi_display_post_enable(display);
 	if (rc)
@@ -276,6 +338,15 @@ static void dsi_bridge_enable(struct drm_bridge *bridge)
 				true);
 		}
 	}
+	dsi_display_esd_irq_switch(c_bridge->display->panel, true);
+
+#ifdef MI_DISPLAY_MODIFY
+	rc = mi_dsi_display_esd_irq_ctrl(c_bridge->display, true);
+	if (rc) {
+		DISP_ERROR("[%d] DSI display enable esd irq failed, rc=%d\n",
+				c_bridge->id, rc);
+	}
+#endif
 }
 
 static void dsi_bridge_disable(struct drm_bridge *bridge)
@@ -290,10 +361,21 @@ static void dsi_bridge_disable(struct drm_bridge *bridge)
 		return;
 	}
 	display = c_bridge->display;
+	display->panel->panel_status = false;
 
-	if (display)
+	if (display){
 		display->enabled = false;
+	}
 
+	dsi_display_esd_irq_switch(c_bridge->display->panel, false);
+
+#ifdef MI_DISPLAY_MODIFY
+		rc = mi_dsi_display_esd_irq_ctrl(c_bridge->display, false);
+		if (rc) {
+			DISP_ERROR("[%d] DSI display disable esd irq failed, rc=%d\n",
+				c_bridge->id, rc);
+	}
+#endif
 	if (display && display->drm_conn) {
 		conn_state = to_sde_connector_state(display->drm_conn->state);
 		if (!conn_state) {
@@ -326,6 +408,7 @@ static void dsi_bridge_post_disable(struct drm_bridge *bridge)
 	}
 
 	display = c_bridge->display;
+	display->panel->panel_status = false;
 
 	SDE_ATRACE_BEGIN("dsi_bridge_post_disable");
 	SDE_ATRACE_BEGIN("dsi_display_disable");
@@ -389,6 +472,9 @@ static void dsi_bridge_mode_set(struct drm_bridge *bridge,
 		DSI_ERR("invalid connector state\n");
 		return;
 	}
+#ifdef MI_DISPLAY_MODIFY
+	mi_sde_connector_state_get_mi_mode_info(&conn_state->base, &(c_bridge->dsi_mode.mi_timing));
+#endif
 
 	msm_parse_mode_priv_info(&conn_state->msm_mode,
 					&(c_bridge->dsi_mode));
@@ -420,7 +506,6 @@ static bool _dsi_bridge_mode_validate_and_fixup(struct drm_bridge *bridge,
 
 	convert_to_dsi_mode(cur_mode, &cur_dsi_mode);
 	msm_parse_mode_priv_info(&old_conn_state->msm_mode, &cur_dsi_mode);
-	cur_dsi_mode.pixel_format_caps = display->panel->host_config.dst_format;
 
 	if (cur_dsi_mode.priv_info) {
 		// in TUI, sometimes msm_mode->private == NULL
@@ -436,6 +521,14 @@ static bool _dsi_bridge_mode_validate_and_fixup(struct drm_bridge *bridge,
 		DSI_ERR("[%s] seamless mode mismatch failure rc=%d\n", c_bridge->display->name, rc);
 		return rc;
 	}
+
+	/*
+	 * DMS Flag if set during active changed condition cannot be
+	 * treated as seamless. Hence, removing DMS flag in such cases.
+	 */
+	if ((adj_mode->dsi_mode_flags & DSI_MODE_FLAG_DMS) &&
+			crtc_state->active_changed)
+		adj_mode->dsi_mode_flags &= ~DSI_MODE_FLAG_DMS;
 
 	/* No DMS/VRR when drm pipeline is changing */
 	if (!dsi_display_mode_match(&cur_dsi_mode, adj_mode,
@@ -454,25 +547,6 @@ static bool _dsi_bridge_mode_validate_and_fixup(struct drm_bridge *bridge,
 			adj_mode->timing.refresh_rate,
 			adj_mode->pixel_clk_khz,
 			adj_mode->panel_mode_caps);
-	}
-
-	/*
-	 * DMS Flag if set during active changed condition cannot be
-	 * treated as seamless. Hence, removing DMS flag in such cases.
-	 */
-	if ((adj_mode->dsi_mode_flags & DSI_MODE_FLAG_DMS) &&
-			crtc_state->active_changed) {
-		DSI_INFO("removing DMS flag splash:%d flags:0x%x\n",
-				display->is_cont_splash_enabled, adj_mode->dsi_mode_flags);
-		adj_mode->dsi_mode_flags &= ~DSI_MODE_FLAG_DMS;
-	}
-
-	if (!dsi_display_mode_match(&cur_dsi_mode, adj_mode,
-			DSI_MODE_MATCH_ACTIVE_TIMINGS) &&
-			(adj_mode->dsi_mode_flags & DSI_MODE_FLAG_DYN_CLK)) {
-		adj_mode->dsi_mode_flags &= ~DSI_MODE_FLAG_DYN_CLK;
-		DSI_ERR("DMS and dyn clk not supported in same commit\n");
-		return false;
 	}
 
 	return rc;
@@ -528,8 +602,7 @@ static bool dsi_bridge_mode_fixup(struct drm_bridge *bridge,
 	msm_parse_mode_priv_info(&conn_state->msm_mode, &dsi_mode);
 	new_sub_mode.dsc_mode = sde_connector_get_property(drm_conn_state,
 				CONNECTOR_PROP_DSC_MODE);
-	new_sub_mode.pixel_format_mode = sde_connector_get_property(drm_conn_state,
-				CONNECTOR_PROP_BPP_MODE);
+
 	/*
 	 * retrieve dsi mode from dsi driver's cache since not safe to take
 	 * the drm mode config mutex in all paths
@@ -543,7 +616,6 @@ static bool dsi_bridge_mode_fixup(struct drm_bridge *bridge,
 	dsi_mode.priv_info = panel_dsi_mode->priv_info;
 	dsi_mode.dsi_mode_flags = panel_dsi_mode->dsi_mode_flags;
 	dsi_mode.panel_mode_caps = panel_dsi_mode->panel_mode_caps;
-	dsi_mode.pixel_format_caps = panel_dsi_mode->pixel_format_caps;
 	dsi_mode.timing.dsc_enabled = dsi_mode.priv_info->dsc_enabled;
 	dsi_mode.timing.dsc = &dsi_mode.priv_info->dsc;
 
@@ -663,8 +735,6 @@ int dsi_conn_get_mode_info(struct drm_connector *connector,
 	mode_info->jitter_denom = dsi_mode->priv_info->panel_jitter_denom;
 	mode_info->dfps_maxfps = dsi_drm_get_dfps_maxfps(display);
 	mode_info->panel_mode_caps = dsi_mode->panel_mode_caps;
-	mode_info->bpp = dsi_mode->bpp;
-	mode_info->pixel_format_caps = dsi_mode->pixel_format_caps;
 	mode_info->mdp_transfer_time_us = dsi_mode->priv_info->mdp_transfer_time_us;
 	mode_info->mdp_transfer_time_us_min = dsi_mode->priv_info->mdp_transfer_time_us_min;
 	mode_info->mdp_transfer_time_us_max = dsi_mode->priv_info->mdp_transfer_time_us_max;
@@ -952,7 +1022,6 @@ void dsi_conn_set_submode_blob_info(struct drm_connector *conn,
 		struct dsi_display_mode *dsi_mode = &dsi_display->modes[i];
 
 		u32 panel_mode_caps = 0;
-		u32 pixel_format_caps = 0;
 		const char *topo_name = NULL;
 
 		if (!dsi_display_mode_match(&partial_dsi_mode, dsi_mode,
@@ -971,19 +1040,6 @@ void dsi_conn_set_submode_blob_info(struct drm_connector *conn,
 
 		sde_kms_info_add_keyint(info, "panel_mode_capabilities",
 			panel_mode_caps);
-
-		switch (dsi_mode->pixel_format_caps) {
-		case DSI_PIXEL_FORMAT_RGB888:
-			pixel_format_caps = DRM_MODE_FLAG_DSI_24BPP;
-			break;
-		case DSI_PIXEL_FORMAT_RGB101010:
-			pixel_format_caps = DRM_MODE_FLAG_DSI_30BPP;
-			break;
-		default:
-			break;
-		}
-
-		sde_kms_info_add_keyint(info, "bpp_mode", pixel_format_caps);
 
 		sde_kms_info_add_keyint(info, "dsc_mode",
 			dsi_mode->priv_info->dsc_enabled ? MSM_DISPLAY_DSC_MODE_ENABLED :

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+ * Copyright (c) 2021-2022, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -166,10 +166,6 @@ static int dp_parser_misc(struct dp_parser *parser)
 		"qcom,max-lclk-frequency-khz", &parser->max_lclk_khz);
 	if (rc)
 		parser->max_lclk_khz = DP_MAX_LINK_CLK_KHZ;
-
-	parser->display_type = of_get_property(of_node, "qcom,display-type", NULL);
-	if (!parser->display_type)
-		parser->display_type = "unknown";
 
 	return 0;
 }
@@ -695,8 +691,6 @@ static int dp_parser_mst(struct dp_parser *parser)
 	parser->has_mst = of_property_read_bool(dev->of_node,
 			"qcom,mst-enable");
 	parser->has_mst_sideband = parser->has_mst;
-	parser->dp_mst_lm_merge_en = of_property_read_bool(dev->of_node,
-			"qcom,dp-mst-lm-merge-en");
 
 	DP_DEBUG("mst parsing successful. mst:%d\n", parser->has_mst);
 
@@ -704,12 +698,6 @@ static int dp_parser_mst(struct dp_parser *parser)
 		of_property_read_u32_index(dev->of_node,
 				"qcom,mst-fixed-topology-ports", i,
 				&parser->mst_fixed_port[i]);
-		of_property_read_string_index(
-				dev->of_node,
-				"qcom,mst-fixed-topology-display-types", i,
-				&parser->mst_fixed_display_type[i]);
-		if (!parser->mst_fixed_display_type[i])
-			parser->mst_fixed_display_type[i] = "unknown";
 	}
 
 	return 0;
@@ -773,90 +761,6 @@ static void dp_parser_widebus(struct dp_parser *parser)
 			parser->has_widebus);
 }
 
-static int parse_lt_param(struct device *dev, u8 **ptr, char *property) {
-	int ret = 0, i = 0, j = 0, index = 0;
-	u32 out_val = 0;
-	u32 expected_elems = MAX_SWING_LEVELS * MAX_PRE_EMP_LEVELS;
-	u8 parsed_val = 0;
-
-	ret = of_property_count_u32_elems(dev->of_node, property);
-	if (ret != expected_elems) {
-		return ret;
-	}
-
-	*ptr = devm_kzalloc(dev, sizeof(u8) * expected_elems, GFP_KERNEL);
-	if (!*ptr)
-		return -ENOMEM;
-
-	for (i = 0; i < MAX_SWING_LEVELS; i++) {
-		for (j = 0; j < MAX_PRE_EMP_LEVELS; j++) {
-			index = i * MAX_SWING_LEVELS + j;
-
-			ret = of_property_read_u32_index(dev->of_node, property, index, &out_val);
-			if (ret)
-				return ret;
-
-			parsed_val = out_val & 0xFF;
-
-			((u8 *)*ptr)[index] = parsed_val;
-		}
-	}
-
-	return ret;
-}
-
-static void dp_parser_clear_link_training_params(struct dp_parser *dp_parser)
-{
-	devm_kfree(&dp_parser->pdev->dev, dp_parser->swing_hbr2_3);
-	devm_kfree(&dp_parser->pdev->dev, dp_parser->pre_emp_hbr2_3);
-	devm_kfree(&dp_parser->pdev->dev, dp_parser->swing_hbr_rbr);
-	devm_kfree(&dp_parser->pdev->dev, dp_parser->pre_emp_hbr_rbr);
-
-	dp_parser->swing_hbr2_3 = NULL;
-	dp_parser->pre_emp_hbr2_3 = NULL;
-	dp_parser->swing_hbr_rbr = NULL;
-	dp_parser->pre_emp_hbr_rbr = NULL;
-
-	dp_parser->valid_lt_params = false;
-}
-
-static void dp_parser_link_training_params(struct dp_parser *parser)
-{
-	struct device *dev = &parser->pdev->dev;
-	int ret = 0;
-
-	ret = parse_lt_param(dev, &parser->swing_hbr2_3, "qcom,hbr2-3-voltage-swing");
-	if (ret)
-		goto early_exit;
-
-	ret = parse_lt_param(dev, &parser->pre_emp_hbr2_3, "qcom,hbr2-3-pre-emphasis");
-	if (ret)
-		goto early_exit;
-
-	ret = parse_lt_param(dev, &parser->swing_hbr_rbr, "qcom,hbr-rbr-voltage-swing");
-	if (ret)
-		goto early_exit;
-
-	ret = parse_lt_param(dev, &parser->pre_emp_hbr_rbr, "qcom,hbr-rbr-pre-emphasis");
-	if (ret)
-		goto early_exit;
-
-	parser->valid_lt_params = true;
-
-	DP_DEBUG("link training parameters parsing success\n");
-	goto end;
-
-early_exit:
-	if(ret == -EINVAL)
-		DP_WARN("link training parameters not found - using default values\n");
-	else
-		DP_ERR("link training parameters parsing failure ret: %d\n", ret);
-
-	dp_parser_clear_link_training_params(parser);
-end:
-	return;
-}
-
 static int dp_parser_parse(struct dp_parser *parser)
 {
 	int rc = 0;
@@ -911,7 +815,6 @@ static int dp_parser_parse(struct dp_parser *parser)
 	dp_parser_fec(parser);
 	dp_parser_widebus(parser);
 	dp_parser_qos(parser);
-	dp_parser_link_training_params(parser);
 err:
 	return rc;
 }
@@ -1019,7 +922,6 @@ void dp_parser_put(struct dp_parser *parser)
 		dp_parser_put_gpio_data(&parser->pdev->dev, &power[i]);
 	}
 
-	dp_parser_clear_link_training_params(parser);
 	dp_parser_clear_io_buf(parser);
 	devm_kfree(&parser->pdev->dev, parser->io.data);
 	devm_kfree(&parser->pdev->dev, parser);

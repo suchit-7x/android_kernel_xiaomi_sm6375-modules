@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -11,17 +11,12 @@
 #include <linux/of_irq.h>
 #include <video/mipi_display.h>
 
-#ifdef CONFIG_UIO
-#include <linux/uio_driver.h>
-#endif
-
 #include "msm_drv.h"
 #include "msm_kms.h"
 #include "msm_mmu.h"
 #include "dsi_ctrl.h"
 #include "dsi_ctrl_hw.h"
 #include "dsi_clk.h"
-#include "dsi_display.h"
 #include "dsi_pwr.h"
 #include "dsi_catalog.h"
 #include "dsi_panel.h"
@@ -30,7 +25,7 @@
 
 #define DSI_CTRL_DEFAULT_LABEL "MDSS DSI CTRL"
 
-#define DSI_CTRL_TX_TO_MS     1200
+#define DSI_CTRL_TX_TO_MS     200
 
 #define TO_ON_OFF(x) ((x) ? "ON" : "OFF")
 
@@ -424,20 +419,22 @@ static void dsi_ctrl_clear_dma_status(struct dsi_ctrl *dsi_ctrl)
 
 	dsi_hw_ops = dsi_ctrl->hw.ops;
 
-	mutex_lock(&dsi_ctrl->ctrl_lock);
-
 	status = dsi_hw_ops.poll_dma_status(&dsi_ctrl->hw);
 	SDE_EVT32(dsi_ctrl->cell_index, SDE_EVTLOG_FUNC_ENTRY, status);
 
 	status |= (DSI_CMD_MODE_DMA_DONE | DSI_BTA_DONE);
 	dsi_hw_ops.clear_interrupt_status(&dsi_ctrl->hw, status);
 
-	mutex_unlock(&dsi_ctrl->ctrl_lock);
 }
 
 static void dsi_ctrl_post_cmd_transfer(struct dsi_ctrl *dsi_ctrl)
 {
+	int rc = 0;
 	struct dsi_ctrl_hw_ops dsi_hw_ops = dsi_ctrl->hw.ops;
+	struct dsi_clk_ctrl_info clk_info;
+	u32 mask = BIT(DSI_FIFO_OVERFLOW);
+
+	mutex_lock(&dsi_ctrl->ctrl_lock);
 
 	SDE_EVT32(SDE_EVTLOG_FUNC_ENTRY, dsi_ctrl->cell_index, dsi_ctrl->pending_cmd_flags);
 
@@ -450,15 +447,30 @@ static void dsi_ctrl_post_cmd_transfer(struct dsi_ctrl *dsi_ctrl)
 		dsi_ctrl_dma_cmd_wait_for_done(dsi_ctrl);
 	}
 
-	mutex_lock(&dsi_ctrl->ctrl_lock);
-
 	if (dsi_ctrl->hw.reset_trig_ctrl)
 		dsi_hw_ops.reset_trig_ctrl(&dsi_ctrl->hw,
 				&dsi_ctrl->host_config.common_config);
 
+	/* Command engine disable, unmask overflow, remove vote on clocks and gdsc */
+	rc = dsi_ctrl_set_cmd_engine_state(dsi_ctrl, DSI_CTRL_ENGINE_OFF, false);
+	if (rc)
+		DSI_CTRL_ERR(dsi_ctrl, "failed to disable command engine\n");
+
+	if (!(dsi_ctrl->pending_cmd_flags & DSI_CTRL_CMD_READ))
+		dsi_ctrl_mask_error_status_interrupts(dsi_ctrl, mask, false);
+
 	mutex_unlock(&dsi_ctrl->ctrl_lock);
 
-	dsi_ctrl_transfer_cleanup(dsi_ctrl);
+	clk_info.client = DSI_CLK_REQ_DSI_CLIENT;
+	clk_info.clk_type = DSI_ALL_CLKS;
+	clk_info.clk_state = DSI_CLK_OFF;
+
+	rc = dsi_ctrl->clk_cb.dsi_clk_cb(dsi_ctrl->clk_cb.priv, clk_info);
+	if (rc)
+		DSI_CTRL_ERR(dsi_ctrl, "failed to disable clocks\n");
+
+	(void)pm_runtime_put_sync(dsi_ctrl->drm_dev->dev);
+
 }
 
 static void dsi_ctrl_post_cmd_transfer_work(struct work_struct *work)
@@ -471,7 +483,7 @@ static void dsi_ctrl_post_cmd_transfer_work(struct work_struct *work)
 	dsi_ctrl->post_tx_queued = false;
 }
 
-void dsi_ctrl_flush_cmd_dma_queue(struct dsi_ctrl *dsi_ctrl)
+static void dsi_ctrl_flush_cmd_dma_queue(struct dsi_ctrl *dsi_ctrl)
 {
 	/*
 	 * If a command is triggered right after another command,
@@ -1117,6 +1129,11 @@ static int dsi_ctrl_update_link_freqs(struct dsi_ctrl *dsi_ctrl,
 	dsi_ctrl->clk_freq.byte_intf_clk_rate = byte_intf_clk_rate;
 	dsi_ctrl->clk_freq.pix_clk_rate = pclk_rate;
 	dsi_ctrl->clk_freq.esc_clk_rate = config->esc_clk_rate_hz;
+
+	rc = dsi_clk_set_link_frequencies(clk_handle, dsi_ctrl->clk_freq,
+					dsi_ctrl->cell_index);
+	if (rc)
+		DSI_CTRL_ERR(dsi_ctrl, "Failed to update link frequencies\n");
 
 	return rc;
 }
@@ -2068,61 +2085,6 @@ static int dsi_ctrl_dts_parse(struct dsi_ctrl *dsi_ctrl,
 	return 0;
 }
 
-#ifdef CONFIG_UIO
-static void uio_init(struct platform_device *pdev)
-{
-	struct uio_info *uio_reg_info = NULL;
-	struct resource *clnt_res = NULL;
-	struct dsi_ctrl *dsi_ctrl;
-	int ret = 0;
-	u32 mem_size = 0;
-	phys_addr_t mem_physical = 0;
-
-	dsi_ctrl = (struct dsi_ctrl *)platform_get_drvdata(pdev);
-
-	clnt_res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "disp_conf");
-	if (!clnt_res) {
-		DSI_CTRL_DEBUG(dsi_ctrl, "resource not found\n");
-		return;
-	}
-
-	mem_size = resource_size(clnt_res);
-	if (mem_size == 0) {
-		DSI_CTRL_DEBUG(dsi_ctrl, "resource memory size is zero\n");
-		goto exit;
-	}
-
-	uio_reg_info = devm_kzalloc(&pdev->dev, sizeof(struct uio_info),
-			GFP_KERNEL);
-	if (!uio_reg_info)
-		goto exit;
-
-	mem_physical = clnt_res->start;
-
-	/* Setup device */
-	uio_reg_info->name = clnt_res->name;
-	uio_reg_info->version = "1.0";
-	uio_reg_info->mem[0].addr = mem_physical;
-	uio_reg_info->mem[0].size = mem_size;
-	uio_reg_info->mem[0].memtype = UIO_MEM_PHYS;
-
-	ret = uio_register_device(&pdev->dev, uio_reg_info);
-	if (ret) {
-		DSI_CTRL_DEBUG(dsi_ctrl, "uio register failed. ret:%d\n", ret);
-		goto exit;
-	}
-
-	DSI_CTRL_DEBUG(dsi_ctrl, "Device file created for dsi_ctrl config.\n");
-	return;
-exit:
-	DSI_CTRL_DEBUG(dsi_ctrl, "Unable to get dsi_ctrl config.\n");
-}
-#else	/* CONFIG_UIO */
-static void uio_init(struct platform_device *pdev)
-{
-}
-#endif	/* CONFIG_UIO */
-
 static int dsi_ctrl_dev_probe(struct platform_device *pdev)
 {
 	struct dsi_ctrl *dsi_ctrl;
@@ -2202,9 +2164,6 @@ static int dsi_ctrl_dev_probe(struct platform_device *pdev)
 
 	dsi_ctrl->pdev = pdev;
 	platform_set_drvdata(pdev, dsi_ctrl);
-
-	uio_init(pdev);
-
 	DSI_CTRL_INFO(dsi_ctrl, "Probe successful\n");
 
 	return 0;
@@ -2775,9 +2734,6 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 				unsigned long error)
 {
 	struct dsi_event_cb_info cb_info;
-	struct dsi_display *display;
-	bool skip_irq_enable = false;
-	bool is_spurious_interrupt = false;
 
 	cb_info = dsi_ctrl->irq_info.irq_err_cb;
 
@@ -2790,14 +2746,10 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 		dsi_ctrl->hw.ops.clear_error_status(&dsi_ctrl->hw,
 					error);
 
-	/* check for spurious interrupts */
-	if (dsi_ctrl_check_for_spurious_error_interrupts(dsi_ctrl))
-		is_spurious_interrupt = true;
-
 	/* DTLN PHY error */
 	if (error & 0x3000E00)
-		pr_err_ratelimited("[%s] dsi PHY contention error: 0x%lx\n",
-				dsi_ctrl->name, error);
+		DSI_CTRL_ERR(dsi_ctrl, "dsi PHY contention error: 0x%lx\n",
+				error);
 
 	/* ignore TX timeout if blpp_lp11 is disabled */
 	if (dsi_ctrl->host_config.panel_mode == DSI_OP_VIDEO_MODE &&
@@ -2827,13 +2779,10 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 		/* no need to report FIFO overflow if already masked */
 		if (cb_info.event_cb && !(mask & 0xf0000)) {
 			cb_info.event_idx = DSI_FIFO_OVERFLOW;
-			display = cb_info.event_usr_ptr;
-			display->is_spurious_interrupt = is_spurious_interrupt;
 			(void)cb_info.event_cb(cb_info.event_usr_ptr,
 						cb_info.event_idx,
 						dsi_ctrl->cell_index,
 						0, 0, 0, 0);
-			skip_irq_enable = true;
 		}
 	}
 
@@ -2841,13 +2790,10 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 	if (error & 0xF00000) {
 		if (cb_info.event_cb) {
 			cb_info.event_idx = DSI_FIFO_UNDERFLOW;
-			display = cb_info.event_usr_ptr;
-			display->is_spurious_interrupt = is_spurious_interrupt;
 			(void)cb_info.event_cb(cb_info.event_usr_ptr,
 						cb_info.event_idx,
 						dsi_ctrl->cell_index,
 						0, 0, 0, 0);
-			skip_irq_enable = true;
 		}
 	}
 
@@ -2866,13 +2812,14 @@ static void dsi_ctrl_handle_error_status(struct dsi_ctrl *dsi_ctrl,
 	 * case and prevent us from re enabling interrupts until a full ESD
 	 * recovery is completed.
 	 */
-	if (is_spurious_interrupt && dsi_ctrl->esd_check_underway) {
+	if (dsi_ctrl_check_for_spurious_error_interrupts(dsi_ctrl) &&
+				dsi_ctrl->esd_check_underway) {
 		dsi_ctrl->hw.ops.soft_reset(&dsi_ctrl->hw);
 		return;
 	}
 
 	/* enable back DSI interrupts */
-	if (dsi_ctrl->hw.ops.error_intr_ctrl && !skip_irq_enable)
+	if (dsi_ctrl->hw.ops.error_intr_ctrl)
 		dsi_ctrl->hw.ops.error_intr_ctrl(&dsi_ctrl->hw, true);
 }
 
@@ -3577,37 +3524,6 @@ int dsi_ctrl_cmd_transfer(struct dsi_ctrl *dsi_ctrl, struct dsi_cmd_desc *cmd)
 	return rc;
 }
 
-void dsi_ctrl_transfer_cleanup(struct dsi_ctrl *dsi_ctrl)
-{
-	int rc = 0;
-	struct dsi_clk_ctrl_info clk_info;
-	u32 mask = BIT(DSI_FIFO_OVERFLOW);
-
-	mutex_lock(&dsi_ctrl->ctrl_lock);
-
-	SDE_EVT32(SDE_EVTLOG_FUNC_ENTRY, dsi_ctrl->cell_index, dsi_ctrl->pending_cmd_flags);
-
-	/* Command engine disable, unmask overflow, remove vote on clocks and gdsc */
-	rc = dsi_ctrl_set_cmd_engine_state(dsi_ctrl, DSI_CTRL_ENGINE_OFF, false);
-	if (rc)
-		DSI_CTRL_ERR(dsi_ctrl, "failed to disable command engine\n");
-
-	if (!(dsi_ctrl->pending_cmd_flags & DSI_CTRL_CMD_READ))
-		dsi_ctrl_mask_error_status_interrupts(dsi_ctrl, mask, false);
-
-	mutex_unlock(&dsi_ctrl->ctrl_lock);
-
-	clk_info.client = DSI_CLK_REQ_DSI_CLIENT;
-	clk_info.clk_type = DSI_ALL_CLKS;
-	clk_info.clk_state = DSI_CLK_OFF;
-
-	rc = dsi_ctrl->clk_cb.dsi_clk_cb(dsi_ctrl->clk_cb.priv, clk_info);
-	if (rc)
-		DSI_CTRL_ERR(dsi_ctrl, "failed to disable clocks\n");
-
-	(void)pm_runtime_put_sync(dsi_ctrl->drm_dev->dev);
-}
-
 /**
  * dsi_ctrl_transfer_unprepare() - Clean up post a command transfer
  * @dsi_ctrl:                 DSI controller handle.
@@ -3624,12 +3540,12 @@ void dsi_ctrl_transfer_unprepare(struct dsi_ctrl *dsi_ctrl, u32 flags)
 	if (!dsi_ctrl)
 		return;
 
-	dsi_ctrl->pending_cmd_flags = flags;
-
 	if (!(flags & DSI_CTRL_CMD_LAST_COMMAND))
 		return;
 
 	SDE_EVT32(SDE_EVTLOG_FUNC_ENTRY, dsi_ctrl->cell_index, flags);
+
+	dsi_ctrl->pending_cmd_flags = flags;
 
 	if (flags & DSI_CTRL_CMD_ASYNC_WAIT) {
 		dsi_ctrl->post_tx_queued = true;

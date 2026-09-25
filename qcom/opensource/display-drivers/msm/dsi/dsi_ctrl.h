@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -946,17 +946,4 @@ int dsi_ctrl_get_io_resources(struct msm_io_res *io_res);
  * dsi_ctrl_toggle_error_interrupt_status() - Toggles error interrupt status
  */
 void dsi_ctrl_toggle_error_interrupt_status(struct dsi_ctrl *dsi_ctrl, bool enable);
-
-/**
- * dsi_ctrl_transfer_cleanup() - Clean up post command transfer
- * @dsi_ctrl:                 DSI controller handle.
- */
-void dsi_ctrl_transfer_cleanup(struct dsi_ctrl *dsi_ctrl);
-
-/**
- * dsi_ctrl_flush_cmd_dma_queue() - Wait fot previous command transfer to complete
- *				and flush any pending post_cmd_transfer works.
- * @dsi_ctrl:                 DSI controller handle.
- */
-void dsi_ctrl_flush_cmd_dma_queue(struct dsi_ctrl *dsi_ctrl);
 #endif /* _DSI_CTRL_H_ */

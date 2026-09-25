@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -58,6 +58,7 @@
 #include "msm_mmu.h"
 #include "sde_wb.h"
 #include "sde_dbg.h"
+#include "lcd_bias.h"
 
 /*
  * MSM driver version:
@@ -911,11 +912,9 @@ static int msm_drm_component_init(struct device *dev)
 	INIT_LIST_HEAD(&priv->client_event_list);
 	INIT_LIST_HEAD(&priv->inactive_list);
 	INIT_LIST_HEAD(&priv->vm_client_list);
-	INIT_LIST_HEAD(&priv->fence_error_client_list);
 	mutex_init(&priv->mm_lock);
 
 	mutex_init(&priv->vm_client_lock);
-	mutex_init(&priv->fence_error_client_lock);
 
 	/* Bind all our sub-components: */
 	ret = msm_component_bind_all(dev, ddev);
@@ -1853,36 +1852,6 @@ static struct drm_driver msm_driver = {
 	.patchlevel         = MSM_VERSION_PATCHLEVEL,
 };
 
-#define SET_SYSTEM_HIBERNATE_OPS(suspend_fn, resume_fn, freeze_late_fn, restore_fn) \
-	.suspend = suspend_fn, \
-	.resume = resume_fn, \
-	.freeze = suspend_fn, \
-	.freeze_late = freeze_late_fn, \
-	.thaw = resume_fn, \
-	.poweroff = suspend_fn, \
-	.restore = restore_fn, \
-
-
-static int msm_pm_freeze_late(struct device *dev)
-{
-	struct drm_device *ddev;
-	struct sde_kms *sde_kms;
-
-	if (!dev)
-		return -EINVAL;
-
-	ddev = dev_get_drvdata(dev);
-
-	if (!ddev || !ddev->dev_private)
-		return -EINVAL;
-
-	sde_kms = to_sde_kms(ddev_to_msm_kms(ddev));
-
-	sde_kms->freeze_late = true;
-
-	return 0;
-}
-
 #if IS_ENABLED(CONFIG_PM_SLEEP)
 static int msm_pm_suspend(struct device *dev)
 {
@@ -1905,31 +1874,6 @@ static int msm_pm_suspend(struct device *dev)
 
 	/* disable hot-plug polling */
 	drm_kms_helper_poll_disable(ddev);
-
-	return 0;
-}
-
-static int msm_pm_restore(struct device *dev)
-{
-	struct drm_device *ddev;
-	struct msm_drm_private *priv;
-	struct msm_kms *kms;
-
-	if (!dev)
-		return -EINVAL;
-
-	ddev = dev_get_drvdata(dev);
-	if (!ddev || !ddev->dev_private)
-		return -EINVAL;
-
-	priv = ddev->dev_private;
-	kms = priv->kms;
-
-	if (kms && kms->funcs && kms->funcs->pm_restore)
-		return kms->funcs->pm_restore(dev);
-
-	/* enable hot-plug polling */
-	drm_kms_helper_poll_enable(ddev);
 
 	return 0;
 }
@@ -1994,8 +1938,7 @@ static int msm_runtime_resume(struct device *dev)
 #endif /* CONFIG_PM */
 
 static const struct dev_pm_ops msm_pm_ops = {
-	SET_SYSTEM_HIBERNATE_OPS(msm_pm_suspend, msm_pm_resume, msm_pm_freeze_late,
-		msm_pm_restore)
+	SET_SYSTEM_SLEEP_PM_OPS(msm_pm_suspend, msm_pm_resume)
 	SET_RUNTIME_PM_OPS(msm_runtime_suspend, msm_runtime_resume, NULL)
 };
 
@@ -2139,65 +2082,6 @@ static int add_display_components(struct device *dev,
 
 	return ret;
 }
-
-void *msm_register_fence_error_event(struct drm_device *ddev, struct msm_fence_error_ops *ops,
-		void *priv_data)
-{
-	struct msm_drm_private *priv;
-	struct msm_fence_error_client_entry *client_entry;
-
-	if (!ddev || !ddev->dev_private) {
-		DRM_ERROR("Invalid drm_device.\n");
-		return ERR_PTR(-EINVAL);
-	}
-	priv = ddev->dev_private;
-
-	if (!ops) {
-		DRM_ERROR("invalid msm_fence_error_ops.\n");
-		return ERR_PTR(-EINVAL);
-	}
-
-	client_entry = kzalloc(sizeof(*client_entry), GFP_KERNEL);
-	if (!client_entry) {
-		DRM_ERROR("invalid client_entry.\n");
-		return ERR_PTR(-ENOMEM);
-	}
-
-	mutex_lock(&priv->fence_error_client_lock);
-	memcpy(&client_entry->ops, ops, sizeof(*ops));
-	client_entry->data = priv_data;
-	list_add(&client_entry->list, &priv->fence_error_client_list);
-	mutex_unlock(&priv->fence_error_client_lock);
-
-	return (void *)client_entry;
-}
-EXPORT_SYMBOL(msm_register_fence_error_event);
-
-int msm_unregister_fence_error_event(struct drm_device *ddev,
-		struct msm_fence_error_client_entry *client_entry_handle)
-{
-	struct msm_drm_private *priv;
-	struct msm_fence_error_client_entry *client_entry = client_entry_handle;
-
-	if (!ddev || !ddev->dev_private) {
-		DRM_ERROR("Invalid drm_device.\n");
-		return -EINVAL;
-	}
-	priv = ddev->dev_private;
-
-	if (IS_ERR_OR_NULL(client_entry_handle)) {
-		DRM_ERROR("Invalid client_entry handle.\n");
-		return -EINVAL;
-	}
-
-	mutex_lock(&priv->fence_error_client_lock);
-	list_del(&client_entry->list);
-	kfree(client_entry);
-	mutex_unlock(&priv->fence_error_client_lock);
-
-	return 0;
-}
-EXPORT_SYMBOL(msm_unregister_fence_error_event);
 
 struct msm_gem_address_space *
 msm_gem_smmu_address_space_get(struct drm_device *dev,
@@ -2421,6 +2305,7 @@ static int __init msm_drm_register(void)
 	msm_dsi_register();
 	msm_edp_register();
 	msm_hdmi_register();
+	lcd_bias_i2c_init();
 	return 0;
 }
 
@@ -2438,6 +2323,7 @@ static void __exit msm_drm_unregister(void)
 	dp_display_unregister();
 	dsi_display_unregister();
 	sde_rsc_unregister();
+	lcd_bias_i2c_exit();
 	platform_driver_unregister(&msm_platform_driver);
 }
 

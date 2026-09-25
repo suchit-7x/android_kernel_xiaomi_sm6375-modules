@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -31,7 +31,6 @@
 #define DSI_MODE_MATCH_PORCH_TIMINGS (1 << 1)
 #define DSI_MODE_MATCH_FULL_TIMINGS (DSI_MODE_MATCH_ACTIVE_TIMINGS | DSI_MODE_MATCH_PORCH_TIMINGS)
 #define DSI_MODE_MATCH_DSC_CONFIG (1 << 2)
-#define DSI_MODE_MATCH_NONDSC_BPP_CONFIG (1 << 3)
 
 /*
  * DSI Validate Mode modifiers
@@ -146,12 +145,9 @@ struct dsi_display_ext_bridge {
  * @list:             List pointer.
  * @is_active:        Is display active.
  * @is_cont_splash_enabled:  Is continuous splash enabled
- * @is_hibernate_splash_enabled: Is hibernation splash enabled.
- * @is_hibernate_exit: Is hibernate exit.
  * @sw_te_using_wd:   Is software te enabled
  * @display_lock:     Mutex for dsi_display interface.
  * @disp_te_gpio:     GPIO for panel TE interrupt.
- * @is_spurious_interrupt: bool to specify spurious interrupt.
  * @is_te_irq_enabled:bool to specify whether TE interrupt is enabled.
  * @esd_te_gate:      completion gate to signal TE interrupt.
  * @ctrl_count:       Number of DSI interfaces required by panel.
@@ -213,14 +209,11 @@ struct dsi_display {
 	const char *display_type;
 	struct list_head list;
 	bool is_cont_splash_enabled;
-	bool is_hibernate_splash_enabled;
-	bool is_hibernate_exit;
 	bool sw_te_using_wd;
 	struct mutex display_lock;
 	int disp_te_gpio;
 	bool is_te_irq_enabled;
 	struct completion esd_te_gate;
-	bool is_spurious_interrupt;
 
 	u32 ctrl_count;
 	struct dsi_display_ctrl ctrl[MAX_DSI_CTRLS_PER_DISPLAY];
@@ -854,11 +847,9 @@ int dsi_display_update_transfer_time(void *display, u32 transfer_time);
  */
 int dsi_display_get_panel_scan_line(void *display, u16 *scan_line, ktime_t *scan_line_ts);
 
-/**
- * dsi_display_report_dead() - report panel dead and cancel work queue
- * @display:     handle to display
- *
- */
-void dsi_display_report_dead(struct dsi_display *display);
-
+#ifdef MI_DISPLAY_MODIFY
+char *mi_dsi_display_get_cmdline_panel_info(struct dsi_display *display);
+int dsi_display_cmd_rx(struct dsi_display *display, struct dsi_cmd_desc *cmd);
+int dsi_display_ctrl_get_host_init_state(struct dsi_display *dsi_display, bool *state);
+#endif
 #endif /* _DSI_DISPLAY_H_ */

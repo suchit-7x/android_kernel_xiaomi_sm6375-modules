@@ -132,7 +132,6 @@ struct sde_encoder_virt_ops {
  * @handle_post_kickoff:	Do any work necessary post-kickoff work
  * @trigger_flush:		Process flush event on physical encoder
  * @trigger_start:		Process start event on physical encoder
- * @clear_flush_mask:		clear flush mask
  * @needs_single_flush:		Whether encoder slaves need to be flushed
  * @setup_misr:		Sets up MISR, enable and disables based on sysfs
  * @collect_misr:		Collects MISR data on frame update
@@ -144,7 +143,6 @@ struct sde_encoder_virt_ops {
  * @restore:			Restore all the encoder configs.
  * @is_autorefresh_enabled:	provides the autorefresh current
  *                              enable/disable state.
- * @is_autoref_disable_pending:	Indicates if autorefresh disable commit in progress
  * @get_line_count:		Obtain current internal vertical line count
  * @wait_dma_trigger:		Returns true if lut dma has to trigger and wait
  *                              unitl transaction is complete.
@@ -155,7 +153,6 @@ struct sde_encoder_virt_ops {
  * @add_to_minidump:		Add this phys_enc data to minidumps
  * @disable_autorefresh:	Disable autorefresh
  * @idle_pc_cache_display_status:	caches display status at idle power collapse
- * @wait_for_vsync_on_autorefresh_busy:	Wait for vsync if autorefresh status busy
  */
 
 struct sde_encoder_phys_ops {
@@ -189,7 +186,6 @@ struct sde_encoder_phys_ops {
 	void (*handle_post_kickoff)(struct sde_encoder_phys *phys_enc);
 	void (*trigger_flush)(struct sde_encoder_phys *phys_enc);
 	void (*trigger_start)(struct sde_encoder_phys *phys_enc);
-	void (*clear_flush_mask)(struct sde_encoder_phys *phys_enc, bool clear);
 	bool (*needs_single_flush)(struct sde_encoder_phys *phys_enc);
 
 	void (*setup_misr)(struct sde_encoder_phys *phys_encs,
@@ -204,7 +200,6 @@ struct sde_encoder_phys_ops {
 	void (*control_te)(struct sde_encoder_phys *phys_enc, bool enable);
 	void (*restore)(struct sde_encoder_phys *phys);
 	bool (*is_autorefresh_enabled)(struct sde_encoder_phys *phys);
-	bool (*is_autoref_disable_pending)(struct sde_encoder_phys *phys);
 	int (*get_line_count)(struct sde_encoder_phys *phys);
 	bool (*wait_dma_trigger)(struct sde_encoder_phys *phys);
 	int (*wait_for_active)(struct sde_encoder_phys *phys);
@@ -214,7 +209,6 @@ struct sde_encoder_phys_ops {
 	void (*add_to_minidump)(struct sde_encoder_phys *phys);
 	void (*disable_autorefresh)(struct sde_encoder_phys *phys);
 	void (*idle_pc_cache_display_status)(struct sde_encoder_phys *phys);
-	void (*wait_for_vsync_on_autorefresh_busy)(struct sde_encoder_phys *phys_enc);
 };
 
 /**
@@ -342,17 +336,6 @@ struct sde_encoder_irq {
  * @vfp_cached:			cached vertical front porch to be used for
  *				programming ROT and MDP fetch start
  * @pf_time_in_us:		Programmable fetch time in micro-seconds
- * @sde_hw_fence_error_status:	Hw fence error handing flag controled by userspace
- *				that if handing fence error in driver
- * @sde_hw_fence_error_value:	hw fence error value from cb function
- * @sde_hw_fence_handle:	Hw fence driver client handle, this handle was returned
- *				during the call 'msm_hw_fence_register' to register the
- *				client
- * @fence_error_handle_in_progress:
- *				bool to indicate if fence error handling in progress
- *				This is set once fence error occurs and cleared only when
- *				good frame is received. Not cleared in continous fence
- *				error cases
  * @frame_trigger_mode:		frame trigger mode indication for command
  *				mode display
  * @recovered:			flag set to true when recovered from pp timeout
@@ -405,10 +388,6 @@ struct sde_encoder_phys {
 	bool in_clone_mode;
 	int vfp_cached;
 	u32 pf_time_in_us;
-	bool sde_hw_fence_error_status;
-	int sde_hw_fence_error_value;
-	u64 sde_hw_fence_handle;
-	bool fence_error_handle_in_progress;
 	enum frame_trigger_mode_type frame_trigger_mode;
 	bool recovered;
 	bool autorefresh_disable_trans;
@@ -419,20 +398,6 @@ static inline int sde_encoder_phys_inc_pending(struct sde_encoder_phys *phys)
 {
 	return atomic_inc_return(&phys->pending_kickoff_cnt);
 }
-
-/*
- * sde_encoder_clear_fence_error_in_progress - clear fence_error_handle_in_progress flag
- *	after good frame
- * @phys_enc: Pointer to physical encoder structure
- */
-void sde_encoder_clear_fence_error_in_progress(struct sde_encoder_phys *phys_enc);
-
-/**
- * sde_encoder_hw_fence_signal - hw fence related fence error handing
- * @phys_enc: Pointer to physical encoder structure
- * return: 0 on success; error code otherwise
- */
-static inline int sde_encoder_hw_fence_signal(struct sde_encoder_phys *phys_enc);
 
 /**
  * struct sde_encoder_phys_vid - sub-class of sde_encoder_phys to handle video

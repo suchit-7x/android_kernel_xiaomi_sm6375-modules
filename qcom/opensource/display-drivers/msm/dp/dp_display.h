@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+ * Copyright (c) 2021-2023, Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -24,7 +24,6 @@ struct dp_mst_drm_cbs {
 	void (*set_drv_state)(void *dp_display,
 			enum dp_drv_state mst_state);
 	int (*set_mgr_state)(void *dp_display, bool state);
-	void (*set_mst_mode_params)(void *dp_display, struct dp_display_mode *mode);
 };
 
 struct dp_mst_drm_install_info {
@@ -46,7 +45,6 @@ struct dp_display {
 	void *base_dp_panel;
 	bool is_sst_connected;
 	bool is_mst_supported;
-	bool dp_mst_lm_merge_enable;
 	bool dsc_cont_pps;
 	u32 max_pclk_khz;
 	void *dp_mst_prv_info;
@@ -110,11 +108,6 @@ struct dp_display {
 			struct msm_resource_caps_info *max_dp_avail_res);
 	void (*clear_reservation)(struct dp_display *dp, struct dp_panel *panel);
 	int (*get_mst_pbn_div)(struct dp_display *dp);
-	int (*get_active_stream_count)(struct dp_display *dp_display);
-	int (*get_display_type)(struct dp_display *dp_display,
-			const char **display_type);
-	int (*mst_get_fixed_topology_display_type)(struct dp_display *dp_display,
-			u32 strm_id, const char **display_type);
 };
 
 void *get_ipc_log_context(void);

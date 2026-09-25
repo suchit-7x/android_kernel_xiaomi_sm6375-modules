@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
  */
 
@@ -76,16 +76,9 @@ struct dp_drm_mst_fw_helper_ops {
 	int (*update_payload_part2)(struct drm_dp_mst_topology_mgr *mgr,
 			struct drm_atomic_state *state,
 			struct drm_dp_mst_atomic_payload *payload);
-#if (KERNEL_VERSION(6, 1, 25) <= LINUX_VERSION_CODE)
-	void (*reset_vcpi_slots)(struct drm_dp_mst_topology_mgr *mgr,
-			struct drm_dp_mst_topology_state *mst_state,
-			const struct drm_dp_mst_atomic_payload *old_payload,
-			struct drm_dp_mst_atomic_payload *new_payload);
-#else
 	void (*reset_vcpi_slots)(struct drm_dp_mst_topology_mgr *mgr,
 			struct drm_dp_mst_topology_state *mst_state,
 			struct drm_dp_mst_atomic_payload *payload);
-#endif
 #else
 
 	int (*atomic_find_vcpi_slots)(struct drm_atomic_state *state,
@@ -316,14 +309,16 @@ static int dp_mst_calc_pbn_mode(struct dp_display_mode *dp_mode)
 	int pbn, bpp;
 	bool dsc_en;
 	s64 pbn_fp;
-	struct dp_panel_info *pinfo = &dp_mode->timing;
 
-	dsc_en = pinfo->comp_info.enabled;
-	bpp = dsc_en ? DSC_BPP(pinfo->comp_info.dsc_info.config) : pinfo->bpp;
+	dsc_en = dp_mode->timing.comp_info.enabled;
+	bpp = dsc_en ?
+		DSC_BPP(dp_mode->timing.comp_info.dsc_info.config)
+		: dp_mode->timing.bpp;
 
-	pbn = drm_dp_calc_pbn_mode(pinfo->pixel_clk_khz, bpp, false);
+	pbn = drm_dp_calc_pbn_mode(dp_mode->timing.pixel_clk_khz, bpp, false);
 	pbn_fp = drm_fixp_from_fraction(pbn, 1);
-	pinfo->pbn_no_overhead = pbn;
+
+	DP_DEBUG_V("before overhead pbn:%d, bpp:%d\n", pbn, bpp);
 
 	if (dsc_en)
 		pbn_fp = drm_fixp_mul(pbn_fp, dp_mode->dsc_overhead_fp);
@@ -332,11 +327,8 @@ static int dp_mst_calc_pbn_mode(struct dp_display_mode *dp_mode)
 		pbn_fp = drm_fixp_mul(pbn_fp, dp_mode->fec_overhead_fp);
 
 	pbn = drm_fixp2int(pbn_fp);
-	pinfo->pbn = pbn;
 
-	DP_DEBUG_V("pbn before overhead:%d pbn final:%d, bpp:%d\n", pinfo->pbn_no_overhead, pbn,
-			bpp);
-
+	DP_DEBUG_V("after overhead pbn:%d, bpp:%d\n", pbn, bpp);
 	return pbn;
 }
 
@@ -512,12 +504,6 @@ static void _dp_mst_update_timeslots(struct dp_mst_private *mst,
 	mst_state = to_drm_dp_mst_topology_state(mst->mst_mgr.base.state);
 	payload = drm_atomic_get_mst_payload_state(mst_state, port);
 
-	if (!payload) {
-		DP_ERR("mst bridge [%d] update_timeslots failed, null payload\n",
-				mst_bridge->id);
-		return;
-	}
-
 	for (i = 0; i < MAX_DP_MST_DRM_BRIDGES; i++) {
 		dp_bridge = &mst->mst_bridge[i];
 		if (mst_bridge == dp_bridge) {
@@ -651,21 +637,14 @@ static int _dp_mst_bridge_pre_enable_part1(struct dp_mst_bridge *dp_bridge)
 #if (KERNEL_VERSION(6, 1, 0) <= LINUX_VERSION_CODE)
 	mst_state = to_drm_dp_mst_topology_state(mst->mst_mgr.base.state);
 	payload = drm_atomic_get_mst_payload_state(mst_state, port);
-	if (!payload || payload->time_slots <= 0) {
+	if (payload->time_slots <= 0) {
 		DP_ERR("time slots not allocated for conn:%d\n", DP_MST_CONN_ID(dp_bridge));
 		rc = -EINVAL;
 		goto end;
 	}
 
 	drm_dp_mst_update_slots(mst_state, DP_CAP_ANSI_8B10B);
-
-	rc = mst->mst_fw_cbs->update_payload_part1(&mst->mst_mgr,
-			mst_state, payload);
-	if (rc) {
-		DP_ERR("payload allocation failure for conn:%d\n", DP_MST_CONN_ID(dp_bridge));
-		goto end;
-	}
-
+	mst->mst_fw_cbs->update_payload_part1(&mst->mst_mgr, mst_state, payload);
 #else
 	ret = mst->mst_fw_cbs->allocate_vcpi(&mst->mst_mgr, port, pbn, slots);
 	if (!ret) {
@@ -707,28 +686,6 @@ static void _dp_mst_bridge_pre_enable_part2(struct dp_mst_bridge *dp_bridge)
 	mst_state = to_drm_dp_mst_topology_state(mst->mst_mgr.base.state);
 	payload = drm_atomic_get_mst_payload_state(mst_state, port);
 
-	if (!payload) {
-		DP_ERR("mst bridge [%d] _pre enable part-2 failed, null payload\n", dp_bridge->id);
-		return;
-	}
-
-	if (!payload->port) {
-		DP_ERR("mst bridge [%d] _pre enable part-2 failed, null port\n", dp_bridge->id);
-		return;
-	}
-
-	if (!payload->port->connector) {
-		DP_ERR("mst bridge [%d] _pre enable part-2 failed, null connector\n",
-				dp_bridge->id);
-		return;
-	}
-
-	if (payload->vc_start_slot == -1) {
-		DP_ERR("mst bridge [%d] _pre enable part-2 failed, payload alloc part 1 failed\n",
-				dp_bridge->id);
-		return;
-	}
-
 	mst->mst_fw_cbs->update_payload_part2(&mst->mst_mgr, mst_state->base.state, payload);
 #else
 	mst->mst_fw_cbs->update_payload_part2(&mst->mst_mgr);
@@ -760,18 +717,7 @@ static void _dp_mst_bridge_pre_disable_part1(struct dp_mst_bridge *dp_bridge)
 #if (KERNEL_VERSION(6, 1, 0) <= LINUX_VERSION_CODE)
 	mst_state = to_drm_dp_mst_topology_state(mst->mst_mgr.base.state);
 	payload = drm_atomic_get_mst_payload_state(mst_state, port);
-
-	if (!payload) {
-		DP_ERR("mst bridge [%d] _pre disable part-1 failed, null payload\n",
-				dp_bridge->id);
-		return;
-	}
-
-#if (KERNEL_VERSION(6, 1, 25) <= LINUX_VERSION_CODE)
-	mst->mst_fw_cbs->reset_vcpi_slots(&mst->mst_mgr, mst_state, payload, payload);
-#else
 	mst->mst_fw_cbs->reset_vcpi_slots(&mst->mst_mgr, mst_state, payload);
-#endif
 #else
 	mst->mst_fw_cbs->reset_vcpi_slots(&mst->mst_mgr, port);
 #endif
@@ -965,7 +911,7 @@ static void dp_mst_bridge_disable(struct drm_bridge *drm_bridge)
 
 static void dp_mst_bridge_post_disable(struct drm_bridge *drm_bridge)
 {
-	int rc = 0, conn = 0;
+	int rc = 0;
 	struct dp_mst_bridge *bridge;
 	struct dp_display *dp;
 	struct dp_mst_private *mst;
@@ -981,10 +927,8 @@ static void dp_mst_bridge_post_disable(struct drm_bridge *drm_bridge)
 		return;
 	}
 
-	conn = DP_MST_CONN_ID(bridge);
-
 	DP_MST_DEBUG_V("enter\n");
-	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY, conn);
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_ENTRY, DP_MST_CONN_ID(bridge));
 
 	dp = bridge->display;
 	mst = dp->dp_mst_prv_info;
@@ -992,19 +936,19 @@ static void dp_mst_bridge_post_disable(struct drm_bridge *drm_bridge)
 	rc = dp->disable(dp, bridge->dp_panel);
 	if (rc)
 		DP_MST_INFO("bridge:%d conn:%d display disable failed, rc=%d\n",
-				bridge->id, conn, rc);
+				bridge->id, DP_MST_CONN_ID(bridge), rc);
 
 	rc = dp->unprepare(dp, bridge->dp_panel);
 	if (rc)
 		DP_MST_INFO("bridge:%d conn:%d display unprepare failed, rc=%d\n",
-				bridge->id, conn, rc);
+				bridge->id, DP_MST_CONN_ID(bridge), rc);
 
 	bridge->connector = NULL;
 	bridge->dp_panel =  NULL;
 
 	DP_MST_INFO("mst bridge:%d conn:%d post disable complete\n",
-			bridge->id, conn);
-	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, conn);
+			bridge->id, DP_MST_CONN_ID(bridge));
+	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, DP_MST_CONN_ID(bridge));
 }
 
 static void dp_mst_bridge_mode_set(struct drm_bridge *drm_bridge,
@@ -1222,7 +1166,6 @@ static int dp_mst_connector_get_modes(struct drm_connector *connector,
 	struct sde_connector *c_conn = to_sde_connector(connector);
 	struct dp_display *dp_display = display;
 	struct dp_mst_private *mst = dp_display->dp_mst_prv_info;
-	struct dp_display_mode *dp_mode = NULL;
 	int rc = 0;
 	struct edid *edid = NULL;
 
@@ -1240,7 +1183,7 @@ static int dp_mst_connector_get_modes(struct drm_connector *connector,
 			&mst->mst_mgr, c_conn->mst_port);
 
 	if (!edid) {
-		DP_WARN("get edid failed. id: %d\n", connector->base.id);
+		DP_ERR("get edid failed. id: %d\n", connector->base.id);
 		goto end;
 	}
 
@@ -1265,13 +1208,8 @@ duplicate_edid:
 end:
 	SDE_EVT32_EXTERNAL(SDE_EVTLOG_FUNC_EXIT, connector->base.id, rc);
 	if (rc <= 0) {
-		DP_WARN("conn:%d has no modes, adding failsafe. rc=%d\n", connector->base.id, rc);
-		dp_mode = kzalloc(sizeof(*dp_mode),  GFP_KERNEL);
-		if (!dp_mode)
-			return 0;
-
-		init_failsafe_mode(dp_mode);
-		rc = dp_connector_add_custom_mode(connector, dp_mode);
+		DP_ERR("conn:%d has no modes, rc=%d\n", connector->base.id, rc);
+		rc = 0;
 	} else {
 		DP_MST_INFO("conn:%d has %d modes\n", connector->base.id, rc);
 	}
@@ -1311,10 +1249,6 @@ enum drm_mode_status dp_mst_connector_mode_valid(
 
 	vrefresh = drm_mode_vrefresh(mode);
 
-	/* As per spec, failsafe mode should always be present */
-	if ((mode->hdisplay == 640) && (mode->vdisplay == 480) && (mode->clock == 25175))
-		goto validate_mode;
-
 	if (dp_panel->mode_override && (mode->hdisplay != dp_panel->hdisplay ||
 			mode->vdisplay != dp_panel->vdisplay ||
 			vrefresh != dp_panel->vrefresh ||
@@ -1353,7 +1287,6 @@ enum drm_mode_status dp_mst_connector_mode_valid(
 		return MODE_BAD;
 	}
 
-validate_mode:
 	return dp_display->validate_mode(dp_display, dp_panel, mode, avail_res);
 }
 
@@ -1923,36 +1856,11 @@ dp_mst_add_fixed_connector(struct drm_dp_mst_topology_mgr *mgr,
 	return connector;
 }
 
-static int dp_mst_fixed_connector_set_info_blob(
-		struct drm_connector *connector,
-		void *info, void *display, struct msm_mode_info *mode_info)
-{
-	struct sde_connector *c_conn = to_sde_connector(connector);
-	struct dp_display *dp_display = display;
-	struct dp_mst_private *mst = dp_display->dp_mst_prv_info;
-	const char *display_type = NULL;
-	int i;
-
-	for (i = 0; i < MAX_DP_MST_DRM_BRIDGES; i++) {
-		if (mst->mst_bridge[i].base.encoder != c_conn->encoder)
-			continue;
-
-		dp_display->mst_get_fixed_topology_display_type(dp_display,
-			mst->mst_bridge[i].id, &display_type);
-		sde_kms_info_add_keystr(info, "display type", display_type);
-
-		break;
-	}
-
-	return 0;
-}
-
 static struct drm_connector *
 dp_mst_drm_fixed_connector_init(struct dp_display *dp_display,
 			struct drm_encoder *encoder)
 {
 	static const struct sde_connector_ops dp_mst_connector_ops = {
-		.set_info_blob = dp_mst_fixed_connector_set_info_blob,
 		.post_init  = dp_mst_connector_post_init,
 		.detect_ctx = dp_mst_fixed_connector_detect,
 		.get_modes  = dp_mst_connector_get_modes,
@@ -2134,12 +2042,6 @@ static void dp_mst_set_state(void *dp_display, enum dp_drv_state mst_state)
 	DP_MST_INFO("mst power state:%d\n", mst_state);
 }
 
-static void dp_mst_display_set_mst_mode_params(void *dp_display, struct dp_display_mode *mode)
-{
-	// update pbn values that will later be used for rg calculation
-	dp_mst_calc_pbn_mode(mode);
-}
-
 /* DP MST APIs */
 
 static const struct dp_mst_drm_cbs dp_mst_display_cbs = {
@@ -2147,7 +2049,6 @@ static const struct dp_mst_drm_cbs dp_mst_display_cbs = {
 	.hpd_irq = dp_mst_display_hpd_irq,
 	.set_drv_state = dp_mst_set_state,
 	.set_mgr_state = dp_mst_display_set_mgr_state,
-	.set_mst_mode_params = dp_mst_display_set_mst_mode_params,
 };
 
 static const struct drm_dp_mst_topology_cbs dp_mst_drm_cbs = {

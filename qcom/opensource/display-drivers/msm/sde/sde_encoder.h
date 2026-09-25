@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+ * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  * Copyright (C) 2013 Red Hat
  * Author: Rob Clark <robdclark@gmail.com>
@@ -181,7 +181,6 @@ enum sde_sim_qsync_event {
  * @rsc_state_init:		boolean to indicate rsc config init
  * @disp_info:			local copy of msm_display_info struct
  * @misr_enable:		misr enable/disable status
- * @vsync_cnt:			Vsync count for the physical encoder
  * @misr_reconfigure:		boolean entry indicates misr reconfigure status
  * @misr_frame_count:		misr frame count before start capturing the data
  * @idle_pc_enabled:		indicate if idle power collapse is enabled
@@ -262,7 +261,6 @@ struct sde_encoder_virt {
 	bool rsc_state_init;
 	struct msm_display_info disp_info;
 	atomic_t misr_enable;
-	atomic_t vsync_cnt;
 	bool misr_reconfigure;
 	u32 misr_frame_count;
 
@@ -318,22 +316,6 @@ void sde_encoder_get_hw_resources(struct drm_encoder *encoder,
 void sde_encoder_early_wakeup(struct drm_encoder *drm_enc);
 
 /**
- * sde_encoder_handle_hw_fence_error - hw fence error handing in sde encoder
- * @ctl_idx:	control path index
- * @sde_kms:	Pointer to sde_kms
- * @handle:	hash of fence signaled with error
- * @error:	error signaled for fence from hw fence callback
- */
-void sde_encoder_handle_hw_fence_error(int ctl_idx, struct sde_kms *sde_kms, u32 handle, int error);
-
-/**
- * sde_encoder_hw_fence_error_handle - fence error handing while hw fence error
- * @drm_enc: Pointer to drm encoder structure
- * return: 0 on success; error code otherwise
- */
-int sde_encoder_hw_fence_error_handle(struct drm_encoder *drm_enc);
-
-/**
  * sde_encoder_register_vblank_callback - provide callback to encoder that
  *	will be called on the next vblank.
  * @encoder:	encoder pointer
@@ -387,18 +369,19 @@ int sde_encoder_prepare_for_kickoff(struct drm_encoder *encoder,
 void sde_encoder_trigger_kickoff_pending(struct drm_encoder *encoder);
 
 /**
- * sde_encoder_reset_kickoff_timeout_ms - Reset the kickoff_timout after modeset
- *        commit for command mode display.
- * @encoder:	encoder pointer
- */
-void sde_encoder_reset_kickoff_timeout_ms(struct drm_encoder *encoder);
-/**
  * sde_encoder_kickoff - trigger a double buffer flip of the ctl path
  *	(i.e. ctl flush and start) immediately.
  * @encoder:	encoder pointer
  * @config_changed: if true new configuration is applied on the control path
  */
 void sde_encoder_kickoff(struct drm_encoder *encoder, bool config_changed);
+
+/**
+ * sde_encoder_vid_wait_for_active - wait Vactive region for some mark region
+ * @drm_enc:    Pointer to drm encoder structure
+ * @Return:     non zero value if wait timeout occurred
+ */
+int sde_encoder_vid_wait_for_active(struct drm_encoder *enc);
 
 /**
  * sde_encoder_wait_for_event - Waits for encoder events
@@ -486,8 +469,6 @@ bool sde_encoder_is_dsc_merge(struct drm_encoder *drm_enc);
  * @Return: true if it is cmd mode
  */
 bool sde_encoder_check_curr_mode(struct drm_encoder *drm_enc, u32 mode);
-
-uint32_t sde_encoder_get_clones(struct drm_encoder *drm_enc);
 
 /**
  * sde_encoder_init - initialize virtual encoder object
@@ -786,12 +767,6 @@ void sde_encoder_add_data_to_minidump_va(struct drm_encoder *drm_enc);
  * @drm_enc: pointer to drm encoder
  */
 void sde_encoder_misr_sign_event_notify(struct drm_encoder *drm_enc);
-
-/**
- * sde_encoder_handle_dma_fence_out_of_order - sw dma fence out of order signal
- * @drm_enc: pointer to drm encoder
- */
-int sde_encoder_handle_dma_fence_out_of_order(struct drm_encoder *drm_enc);
 
 /**
  * sde_encoder_register_misr_event - register or deregister MISR event
