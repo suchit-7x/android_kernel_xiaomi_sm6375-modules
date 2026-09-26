@@ -1762,7 +1762,10 @@ static int wcd_mbhc_set_keycode(struct wcd_mbhc *mbhc)
 }
 
 //ADD: Typec_Mode_For_Audio
-extern int audio_get_prop_typec_mode(void);
+int __attribute__((weak)) audio_get_prop_typec_mode(void)
+{
+	return 0;
+}
 
 static int wcd_mbhc_non_usb_c_event_changed(struct notifier_block *nb, unsigned long evt,  void *ptr)
 {
