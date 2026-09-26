@@ -747,6 +747,10 @@ struct dsi_cmd_update_info {
  */
 struct dsi_display_mode_priv_info {
 	struct dsi_panel_cmd_set cmd_sets[DSI_CMD_SET_MAX];
+        struct dsi_panel_cmd_set flat_on_gamma;
+        struct dsi_panel_cmd_set flat_off_gamma;
+        struct dsi_panel_cmd_set flat_on_lhbm_gamma;
+        struct dsi_panel_cmd_set flat_off_lhbm_gamma;
 
 	u32 *phy_timing_val;
 	u32 phy_timing_len;
